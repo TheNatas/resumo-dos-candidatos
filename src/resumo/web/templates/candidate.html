@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ d.candidacy.nome }} · Resumo dos Candidatos{% endblock %}
+{% block content %}
+{% set c = d.candidacy %}
+<a href="/" class="back">← voltar</a>
+
+<article class="ficha">
+  <h1>{{ c.nome_urna or c.nome }}</h1>
+  <p class="subtitle">{{ c.nome }}</p>
+  <ul class="attrs">
+    <li><span>Cargo</span>{{ c.cargo }}</li>
+    <li><span>UF</span>{{ c.uf }}</li>
+    <li><span>Partido</span>{{ c.partido }}</li>
+    <li><span>Ano</span>{{ c.ano }}</li>
+    <li><span>Situação</span>{{ c.situacao or '—' }}</li>
+    <li><span>Resultado</span>{{ c.resultado or '—' }}</li>
+  </ul>
+
+  <section>
+    <h2>Proposta de governo</h2>
+    {% if d.proposals %}
+      <ul class="proposals">
+        {% for p in d.proposals %}
+          <li>📄 {{ p.filename or 'Proposta de governo' }} <em>({{ p.source }})</em></li>
+        {% endfor %}
+      </ul>
+    {% elif c.majoritario %}
+      <p class="muted">Proposta de governo ainda não disponível para esta candidatura.</p>
+    {% else %}
+      <p class="muted">Cargo proporcional — sem proposta de governo oficial (obrigatória só para majoritários).</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Histórico de atuação</h2>
+    {% if d.incumbent_confirmed %}
+      {% set t = d.track_record %}
+      <p class="confirmed">
+        Incumbente confirmado ({{ d.link.house }}) ·
+        vínculo {{ d.link.match_method }} ({{ '%.2f'|format(d.link.confidence_score) }}, {{ d.link.confidence_tier }})
+      </p>
+      <ul class="stats">
+        <li><strong>{{ t.votes_total }}</strong><span>votos nominais</span></li>
+        <li><strong>{{ t.votes_sim }}</strong><span>votos "Sim"</span></li>
+        <li><strong>{{ t.propositions_total }}</strong><span>proposições</span></li>
+        <li><strong>{{ t.attendance_present }}/{{ t.attendance_events }}</strong><span>presenças*</span></li>
+        <li><strong>R$ {{ '%.2f'|format(t.expense_total) }}</strong><span>CEAP (líquido)</span></li>
+      </ul>
+      <p class="note">*{{ t.attendance_note }}</p>
+    {% else %}
+      <p class="unconfirmed">Incumbência não confirmada — sem histórico de mandato vinculado a esta candidatura.</p>
+    {% endif %}
+  </section>
+</article>
+{% endblock %}

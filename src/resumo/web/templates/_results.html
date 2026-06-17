@@ -1,0 +1,17 @@
+{% if results %}
+<ul class="cards">
+  {% for c in results %}
+  <li class="card">
+    <a href="/candidato/{{ c.sq_candidato }}">
+      <strong>{{ c.nome_urna or c.nome }}</strong>
+      <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
+      {% if c.resultado %}<span class="badge">{{ c.resultado }}</span>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% elif q or uf %}
+<p class="empty">Nenhuma candidatura encontrada.</p>
+{% else %}
+<p class="empty">Digite um nome para começar.</p>
+{% endif %}

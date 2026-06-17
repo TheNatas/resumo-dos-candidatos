@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="search">
+  <h1>Busque um candidato</h1>
+  <input type="search" name="q" placeholder="Nome do candidato…" value="{{ q }}"
+         hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms, search"
+         hx-include="[name='uf']" autofocus>
+  <input type="text" name="uf" placeholder="UF" maxlength="2" value="{{ uf }}"
+         hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms"
+         hx-include="[name='q']" class="uf">
+</section>
+<section id="results">
+  {% include "_results.html" %}
+</section>
+{% endblock %}

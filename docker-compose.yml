@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16
+    container_name: resumo-db
+    environment:
+      POSTGRES_USER: resumo
+      POSTGRES_PASSWORD: resumo
+      POSTGRES_DB: resumo
+    ports:
+      # Host 5435 -> container 5432, to avoid clashing with other local Postgres instances.
+      - "5435:5432"
+    volumes:
+      - resumo-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resumo -d resumo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  resumo-pgdata:
