@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Sobre os dados · Resumo dos Candidatos{% endblock %}
+{% block content %}
+<a href="{{ base_url }}/" class="back">← voltar</a>
+
+<article class="ficha">
+  <h1>Sobre os dados</h1>
+  <p class="subtitle">{{ scope_label }}</p>
+
+  <section>
+    <h2>O que esta página cobre</h2>
+    <p>Para cada candidatura: propostas de governo (quando o cargo exige), bens
+    declarados e financiamento de campanha. O <strong>histórico de atuação</strong>
+    — votos, proposições, presença, gastos de gabinete e emendas — aparece
+    <strong>apenas para quem já exerce mandato</strong> e só quando o vínculo entre a
+    candidatura e o mandato foi confirmado.</p>
+  </section>
+
+  <section>
+    <h2>Fontes</h2>
+    <ul class="proposals">
+      <li><strong>TSE</strong> — candidaturas, bens, propostas de governo e prestação
+      de contas de campanha.</li>
+      <li><strong>Câmara dos Deputados</strong> — mandatos, votações, proposições,
+      presença e cota parlamentar (CEAP).</li>
+      <li><strong>Senado Federal</strong> — mandatos, votações, proposições e CEAPS.</li>
+      <li><strong>ALESC</strong> — mandatos, votações nominais, proposições, presença
+      e gastos de gabinete.</li>
+      <li><strong>CGU</strong> — emendas parlamentares individuais (empenhado,
+      liquidado, pago).</li>
+    </ul>
+    <p class="note">Nenhuma fonte exige chave de API. Todo dado aqui é público e
+    gratuito, e cada arquivo baixado fica registrado com seu hash, para que qualquer
+    número possa ser rastreado até o arquivo de origem.</p>
+  </section>
+
+  <section>
+    <h2>Ressalvas que mudam a leitura dos números</h2>
+
+    <h3>ALESC — cobertura parcial</h3>
+    <p>Gastos, proposições e presença são completos, mas <strong>cerca de 96% das
+    matérias são decididas em votação simbólica</strong>, que por definição não
+    registra a posição individual de cada deputado. Restam poucas centenas de votos
+    nominais em toda a legislatura, e não há registro anterior a fevereiro de 2023.
+    <strong>Esses números não são comparáveis</strong> com os de deputados federais.</p>
+
+    <h3>Senado — a maioria das votações é secreta</h3>
+    <p><strong>57% das votações da legislatura 57 são secretas.</strong> Nelas o voto
+    individual não é publicado; só os totais agregados existem. Por isso um senador
+    tem ordens de grandeza menos votos nominais que um deputado federal —
+    <strong>sem que isso diga nada sobre ele</strong>.</p>
+
+    <h3>Despesas da ALESC sem atribuição</h3>
+    <p>O portal da transparência usa o nome civil e o e-Legis o nome parlamentar.
+    Quando o casamento não é exato, a linha fica <strong>sem atribuição</strong> e é
+    registrada em log — pôr o gasto de um deputado na ficha de outro seria pior que
+    não exibi-lo.</p>
+
+    <h3>Emendas — não existe "valor autorizado" na fonte</h3>
+    <p>O empenhado é o melhor indicador disponível e está rotulado como tal. Só
+    emendas <strong>individuais</strong> são atribuíveis a um parlamentar; as de
+    bancada, comissão e relator são coletivas.</p>
+
+    <h3>Presença é derivada</h3>
+    <p>Nenhuma Casa publica um índice de presença. Na Câmara ele vem de listas de
+    eventos; no Senado, dos códigos de comparecimento das votações. Sempre rotulado
+    como derivado.</p>
+  </section>
+
+  <section>
+    <h2>Como o histórico é vinculado a um candidato</h2>
+    <p>Dizer "esta candidatura é a mesma pessoa que exerce este mandato" é uma
+    afirmação que pode estar errada, e uma atribuição errada colocaria o histórico de
+    uma pessoa na ficha de outra. Por isso o vínculo é explícito e tem nível de
+    confiança exibido na ficha:</p>
+    <ul class="proposals">
+      <li><strong>CPF</strong> (Câmara) — determinístico.</li>
+      <li><strong>Nome civil + data de nascimento</strong> (Senado, que não publica
+      CPF).</li>
+      <li><strong>Só nome</strong> (ALESC, que não publica nem CPF nem nascimento) —
+      <strong>nunca</strong> alcança o nível mais alto.</li>
+    </ul>
+    <p><strong>Nome sozinho jamais funde dois registros.</strong> Duas pessoas
+    homônimas são indistinguíveis sem um campo corroborante; uma duplicata é
+    recuperável, uma fusão errada não é. Casos ambíguos vão para uma fila de revisão
+    manual e <strong>não aparecem no site</strong> enquanto não forem decididos.</p>
+    <p class="note">O CPF é usado para o casamento, mas <strong>não</strong> é
+    exibido nem publicado (LGPD).</p>
+  </section>
+
+  <section>
+    <h2>Ausência de dado não é juízo sobre o candidato</h2>
+    <p>Quando o histórico não aparece, a ficha diz qual dos quatro casos é: histórico
+    disponível mas sem incumbência confirmada · cargo executivo, em que votação
+    nominal não existe por natureza · cobertura parcial da Casa · nenhuma fonte
+    pública. <strong>Silêncio aqui é sobre a fonte, não sobre a pessoa.</strong></p>
+  </section>
+
+  <section>
+    <h2>Correções</h2>
+    <p>Os dados são republicados de fontes oficiais e abertas (LAI). Se algum número
+    aqui divergir da fonte, é um erro desta plataforma e vale a pena reportar — o
+    código e o histórico de cada mudança são públicos.</p>
+  </section>
+</article>
+{% endblock %}

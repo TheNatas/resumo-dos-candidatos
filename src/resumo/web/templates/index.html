@@ -5,10 +5,10 @@
   <p class="scope">{{ scope_label }}</p>
   <div class="filters">
     <input type="search" name="q" placeholder="Nome do candidato…" value="{{ q }}"
-           hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms, search"
+           hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="keyup changed delay:300ms, search"
            hx-include="[name='uf'],[name='cargo']" autofocus>
     <select name="cargo" class="cargo"
-            hx-get="/" hx-target="#results" hx-trigger="change"
+            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
             hx-include="[name='q'],[name='uf']">
       <option value="">Todos os cargos</option>
       {% for value, label in cargo_options %}
@@ -16,7 +16,7 @@
       {% endfor %}
     </select>
     <input type="text" name="uf" placeholder="UF" maxlength="2" value="{{ uf }}"
-           hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms"
+           hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="keyup changed delay:300ms"
            hx-include="[name='q'],[name='cargo']" class="uf">
   </div>
 </section>

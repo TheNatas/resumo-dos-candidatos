@@ -1,0 +1,217 @@
+# Coleta → resolve → renderiza → publica. Runner público (minutos ilimitados em
+# repositório público) e NENHUM segredo: nenhuma fonte exige chave de API.
+#
+# O banco não mora no repositório. Ele vive aqui como service container efêmero,
+# restaurado a cada execução a partir de um snapshot no cache do Actions. Se o
+# snapshot sumir, o backfill completo roda de novo: os coletores são idempotentes e
+# todas as fontes são públicas, então o pipeline se recupera sozinho.
+name: build-and-deploy
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 05:00 BRT — o TSE regenera os arquivos por volta das 04:00
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full_backfill:
+        description: "Ignora o snapshot e recoleta tudo do zero"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Uma publicação por vez, sem cancelar a que já está coletando.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  RESUMO_DATABASE_URL: postgresql+psycopg://resumo:resumo@localhost:5432/resumo
+  RESUMO_STORAGE_DIR: ./data/storage
+  SNAPSHOT_DIR: .snapshot
+
+jobs:
+  # Falha em segundos quando o arquivo de decisões está quebrado, sem subir banco.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run resumo review validate
+      - run: uv run ruff check src tests
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: resumo
+          POSTGRES_PASSWORD: resumo
+          POSTGRES_DB: resumo
+        # 5439 é a porta que o conftest espera (a mesma do docker-compose local).
+        ports: ["5439:5432"]
+        options: >-
+          --health-cmd "pg_isready -U resumo -d resumo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run pytest -q
+
+  build:
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330 # o teto do job é 6 h; o backfill frio cabe com folga
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: resumo
+          POSTGRES_PASSWORD: resumo
+          POSTGRES_DB: resumo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U resumo -d resumo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      # Sem chave de API em nenhuma fonte: este header é a ÚNICA identificação do
+      # operador. Defina a variável RESUMO_CONTACT no repositório
+      # (Settings → Secrets and variables → Actions → Variables).
+      RESUMO_HTTP_USER_AGENT: >-
+        resumo-dos-candidatos/0.1 (transparencia eleitoral;
+        ${{ vars.RESUMO_CONTACT || 'contato-nao-configurado@exemplo.invalid' }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+
+      # Descobre sob qual URL o site será servido: subpath do projeto, ou raiz se
+      # houver domínio próprio. É daqui que sai o prefixo dos links internos.
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      # O snapshot carrega o banco E os PDFs. Os dois juntos, de propósito: o ledger
+      # RawIngestion trata artefato inalterado como no-op, então um banco restaurado
+      # sem os PDFs no disco nunca os rebaixaria — as propostas sumiriam do site.
+      - name: Restaura o snapshot
+        id: snapshot
+        if: ${{ !inputs.full_backfill }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.SNAPSHOT_DIR }}
+          key: snapshot-${{ github.run_id }}
+          restore-keys: snapshot-
+
+      - name: Carrega o snapshot no Postgres
+        if: steps.snapshot.outputs.cache-matched-key != ''
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v "$PWD/$SNAPSHOT_DIR:/s" postgres:16 \
+            pg_restore --no-owner --clean --if-exists \
+              -d "postgresql://resumo:resumo@localhost:5432/resumo" /s/resumo.dump
+          tar -xzf "$SNAPSHOT_DIR/storage.tar.gz" -C .
+          echo "PDFs restaurados: $(du -sh "$RESUMO_STORAGE_DIR" 2>/dev/null | cut -f1 || echo 0)"
+
+      - name: Migrações
+        run: uv run resumo db-upgrade
+      - run: uv run resumo scope
+
+      # Best-effort: uma fonte fora do ar significa "sem dado novo hoje", não site
+      # fora do ar — o snapshot já traz o que foi coletado antes. As falhas seguem
+      # visíveis como anotações na execução.
+      - name: Coleta — TSE
+        continue-on-error: true
+        run: |
+          uv run resumo collect tse-candidates
+          uv run resumo collect tse-assets
+          uv run resumo collect tse-proposta
+          uv run resumo collect tse-contas
+
+      - name: Coleta — mandatos (sempre antes do histórico)
+        continue-on-error: true
+        run: |
+          uv run resumo collect camara-deputados
+          uv run resumo collect senado-senadores
+          uv run resumo collect alesc-deputados
+
+      - name: Coleta — histórico de atuação
+        continue-on-error: true
+        run: |
+          HOJE="$(date -u +%F)"
+          ANOS="2023,2024,2025,2026"
+          uv run resumo collect camara-despesas    --anos "$ANOS"
+          uv run resumo collect camara-proposicoes
+          uv run resumo collect camara-votacoes    --inicio 2026-01-01 --fim "$HOJE"
+          uv run resumo collect camara-eventos     --inicio 2026-01-01 --fim "$HOJE"
+          uv run resumo collect senado-despesas    --anos "$ANOS"
+          uv run resumo collect senado-proposicoes
+          uv run resumo collect senado-votacoes    --inicio 2026-01-01 --fim "$HOJE"
+          uv run resumo collect alesc-despesas     --anos 2025,2026
+          uv run resumo collect alesc-votacoes     --inicio 2026-01-01 --fim "$HOJE"
+          uv run resumo collect alesc-presenca     --inicio 2026-01-01 --fim "$HOJE"
+          uv run resumo collect alesc-proposicoes  --anos 2026
+
+      - name: Coleta — emendas
+        continue-on-error: true
+        run: |
+          uv run resumo collect emendas
+          uv run resumo link-emendas-authors
+
+      # A fila é SAÍDA do resolve e as decisões são ENTRADA dele: num banco recém
+      # construído a fila só existe depois da primeira passada. Então resolve roda,
+      # as decisões versionadas são aplicadas, e resolve roda de novo já com elas.
+      - name: Resolve → aplica decisões versionadas → resolve
+        run: |
+          uv run resumo resolve --year 2026
+          uv run resumo review apply
+          uv run resumo resolve --year 2026
+
+      - name: Renderiza o site
+        run: |
+          uv run resumo render \
+            --out _site \
+            --base-url "${{ steps.pages.outputs.base_path }}" \
+            --site-url "${{ steps.pages.outputs.base_url }}"
+          du -sh --apparent-size _site
+
+      - name: Salva o snapshot
+        run: |
+          set -euo pipefail
+          mkdir -p "$SNAPSHOT_DIR" "$RESUMO_STORAGE_DIR"
+          docker run --rm --network host -v "$PWD/$SNAPSHOT_DIR:/s" postgres:16 \
+            pg_dump -Fc -Z6 -d "postgresql://resumo:resumo@localhost:5432/resumo" -f /s/resumo.dump
+          tar -czf "$SNAPSHOT_DIR/storage.tar.gz" "$RESUMO_STORAGE_DIR"
+          du -sh "$SNAPSHOT_DIR"/*
+      # Chave de cache é imutável: cada execução grava uma entrada nova e o LRU do
+      # GitHub descarta as velhas. `restore-keys: snapshot-` pega sempre a mais recente.
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ env.SNAPSHOT_DIR }}
+          key: snapshot-${{ github.run_id }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

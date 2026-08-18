@@ -17,6 +17,7 @@ the three cases mean completely different things to a reader:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -62,6 +63,28 @@ def search_candidacies(
     if year:
         stmt = stmt.where(Candidacy.ano_eleicao == year)
     stmt = stmt.order_by(Candidacy.nome_candidato).limit(limit)
+    return [_candidacy_summary(c) for c in session.execute(stmt).scalars()]
+
+
+def candidacies_in_scope(
+    session: Session,
+    *,
+    year: int,
+    ufs: Sequence[str] = (),
+    cargo_codes: Sequence[int] = (),
+) -> list[dict]:
+    """Every candidacy this deploy covers, as summaries.
+
+    The static renderer's source of truth for which pages exist. Deliberately not
+    `search_candidacies` with a big limit: which pages get published is an explicit
+    scoped query, never whatever a search box happened to ask for.
+    """
+    stmt = select(Candidacy).where(Candidacy.ano_eleicao == year)
+    if ufs:
+        stmt = stmt.where(Candidacy.sg_uf.in_([u.upper() for u in ufs]))
+    if cargo_codes:
+        stmt = stmt.where(Candidacy.cd_cargo.in_(list(cargo_codes)))
+    stmt = stmt.order_by(Candidacy.nome_candidato, Candidacy.sq_candidato)
     return [_candidacy_summary(c) for c in session.execute(stmt).scalars()]
 
 
@@ -232,7 +255,9 @@ def amendments_summary(session: Session, mandate_id: uuid.UUID) -> dict:
     }
 
 
-def candidate_detail(session: Session, sq: str) -> dict | None:
+def candidate_detail(
+    session: Session, sq: str, *, include_storage_path: bool = False
+) -> dict | None:
     cand = get_candidacy(session, sq)
     if cand is None:
         return None
@@ -265,7 +290,21 @@ def candidate_detail(session: Session, sq: str) -> dict | None:
     return {
         "candidacy": _candidacy_summary(cand),
         "proposals": [
-            {"source": p.source, "filename": p.original_filename, "storage_path": p.storage_path}
+            # `storage_path` is a server filesystem path and must not leave the
+            # process: it leaks the deploy's directory layout and gives a reader
+            # nothing. The id is the public handle, and the PDF is served from it —
+            # collecting the proposta and never letting anyone open it would defeat
+            # the point of collecting it.
+            {
+                "id": str(p.id),
+                "source": p.source,
+                "filename": p.original_filename,
+                "url": f"/proposta/{p.id}.pdf",
+                # Build-time only: the static renderer needs to find the file on disk
+                # to copy it. Underscored and opt-in so it can never reach the public
+                # payload by default.
+                **({"_storage_path": p.storage_path} if include_storage_path else {}),
+            }
             for p in get_proposals(session, sq)
         ],
         "incumbent_confirmed": accepted is not None,
@@ -283,6 +322,7 @@ def _candidacy_summary(c: Candidacy) -> dict:
         "sq_candidato": c.sq_candidato,
         "nome": c.nome_candidato,
         "nome_urna": c.nome_urna,
+        "nome_normalizado": c.nome_normalizado,
         "ano": c.ano_eleicao,
         "cd_cargo": c.cd_cargo,
         "cargo": c.ds_cargo,

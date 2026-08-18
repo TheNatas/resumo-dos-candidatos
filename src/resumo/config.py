@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://resumo:resumo@localhost:5439/resumo"
     storage_dir: Path = Path("./data/storage")
 
+    # URL prefix the site is served under. Empty for the local app and for a custom
+    # domain at the root; "/resumo-dos-candidatos" for a GitHub Pages project site.
+    # Templates prefix every internal URL with it, so the same markup is correct
+    # served live and rendered static.
+    site_base_url: str = ""
+
     # ── Official source bases (no auth) ──────────────────────────────────────
     tse_cdn_base: str = "https://cdn.tse.jus.br/estatistica/sead/odsele"
     tse_ckan_base: str = "https://dadosabertos.tse.jus.br/api/3/action"
@@ -73,6 +79,13 @@ class Settings(BaseSettings):
     )
     request_delay_seconds: float = 0.2
     http_timeout_seconds: float = 60.0
+
+    @field_validator("site_base_url", mode="before")
+    @classmethod
+    def _strip_trailing_slash(cls, v):
+        """"/prefix/" and "/prefix" must produce the same URLs; templates always
+        concatenate "{base}/path", so a trailing slash would yield "//path"."""
+        return v.rstrip("/") if isinstance(v, str) else v
 
     @field_validator("cd_eleicao", mode="before")
     @classmethod
