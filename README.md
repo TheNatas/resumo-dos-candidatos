@@ -208,7 +208,34 @@ Cada casa publica um conjunto diferente de identificadores, e isso governa a con
 |---|---|---|---|---|
 | Câmara | ✅ | ✅ | CPF (determinístico) | `auto_strong` |
 | Senado | ❌ **não publica** | ✅ | nome civil + nascimento | `auto_strong` |
-| ALESC | ❌ | ❌ | só nome | `auto_weak` (teto) |
+| ALESC | ❌ | ❌ | CPF recuperado do TSE (ver abaixo) | `auto_strong` |
+| ALESC *sem ponte* | ❌ | ❌ | só nome | `auto_weak` (teto) |
+
+### A ponte de CPF pelo histórico do TSE
+
+A ALESC não publica CPF nem nascimento, o que deixaria o nome como única ponte — e
+nome sozinho emparelha pessoas diferentes (`SALMIR DA SILVA` com o mandato de
+`ALTAIR DA SILVA`). Mas quem exerce mandato estadual **se elegeu**, e quem se elegeu
+está no arquivo do próprio TSE daquela eleição, com CPF:
+
+```
+candidatura 2026  ──CPF (idêntico)──▶  candidatura 2022 (TSE)
+                                             │
+                             nome de urna ≡ nome parlamentar
+                                             ▼
+                                       mandato ALESC
+```
+
+O salto por nome continua existindo, mas compara **nome de urna com nome
+parlamentar** — a mesma convenção — exigindo igualdade exata, correspondência única,
+mesma UF, mesmo cargo, mesma eleição, e registro de quem ocupou ou podia ocupar a
+cadeira (eleito ou suplente). O vínculo publicado é igualdade de CPF, e leva método
+próprio (`cpf_via_tse`) para a ficha não anunciar mais certeza do que existe.
+
+O sentido negativo é o mais valioso: **um mandato com CPF conhecido está fechado para
+qualquer outro CPF**, o que refuta de uma vez os pares que a comparação de nomes
+propôs por acaso. Em SC isso resolveu a maior parte da fila de revisão — de 85
+pendências para 17, e de 20 para 58 vínculos `auto_strong`.
 
 `resolution/identity.py` reúne a mesma pessoa vista por casas diferentes. **Nome
 sozinho nunca funde dois registros** — duas pessoas homônimas são indistinguíveis sem
@@ -271,7 +298,8 @@ Não é uma lista de testes — é o que já rodou contra as fontes de produçã
 | Candidaturas SC 2026 | 658 (8 governador · 13 senador · 229 dep. federal · 408 dep. estadual) |
 | Bens declarados · propostas de governo | 3.428 · 8 (uma por candidatura a governador) |
 | Mandatos | 26 Câmara · 9 Senado · 61 ALESC |
-| Vínculo candidatura↔mandato (2026) | 20 (18 `cpf_exact`, 2 `probabilistic` via nome+nascimento) |
+| Vínculo candidatura↔mandato (2026) | 64 (18 `cpf_exact` · 38 `cpf_via_tse` · 8 `probabilistic`) — 58 `auto_strong` |
+| Fila de revisão manual | 17 (era 85 antes da ponte de CPF) |
 | **Contas de campanha 2022/SC — receitas** | R$ 208.484.026,62 — **bate exatamente** com a fonte |
 | **— despesas contratadas** | 58.320 linhas / R$ 204.602.522,45 — **exato** |
 | **— despesas pagas** | 65.300 linhas / R$ 196.387.519,05 — **exato** |

@@ -22,6 +22,7 @@ import logging
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from resumo.config import get_settings
 from resumo.db.models import (
     Candidacy,
     CandidateMandateLink,
@@ -31,7 +32,7 @@ from resumo.db.models import (
     ReviewStatus,
 )
 from resumo.ingestion.ledger import upsert
-from resumo.resolution import deterministic, probabilistic
+from resumo.resolution import bridge, deterministic, probabilistic
 from resumo.resolution.blocking import PersonIndex
 from resumo.resolution.records import PersonRec, load_candidacy_recs, load_person_recs
 
@@ -52,11 +53,16 @@ class ResolutionResult:
         self.auto_weak = 0
         self.review = 0
         self.unmatched = 0
+        self.via_tse = 0
+        # Mandatos cujo CPF recuperado fechou a identidade: nenhuma outra
+        # candidatura pode ser proposta para eles pelo comparador de nomes.
+        self.closed_mandates = 0
 
     def __str__(self) -> str:
+        extra = f", cpf_via_tse={self.via_tse}" if self.via_tse else ""
         return (
             f"links={self.links} (strong={self.auto_strong}, weak={self.auto_weak}), "
-            f"review={self.review}, unmatched={self.unmatched}"
+            f"review={self.review}, unmatched={self.unmatched}{extra}"
         )
 
 
@@ -77,6 +83,11 @@ def _decided_overrides(session: Session) -> tuple[dict[str, str], set[tuple[str,
     return forced, rejected
 
 
+def _cpf_conflict(ident: bridge.BridgedIdentity | None, cand_cpf: str | None) -> bool:
+    """Um mandato com CPF conhecido está fechado para qualquer outro CPF."""
+    return bool(ident and cand_cpf and ident.cpf != cand_cpf)
+
+
 def resolve(session: Session, *, year: int | None = None) -> ResolutionResult:
     persons = load_person_recs(session)
     index = PersonIndex(persons)
@@ -84,7 +95,16 @@ def resolve(session: Session, *, year: int | None = None) -> ResolutionResult:
     cands = load_candidacy_recs(session, year=year)
     forced, rejected = _decided_overrides(session)
 
+    # CPF recuperado do histórico do TSE para as Casas que não publicam CPF. Serve
+    # nos dois sentidos, e o negativo é o mais valioso: refuta de uma vez os pares
+    # que a comparação de nomes propôs por acaso.
+    bridged = bridge.recover_cpfs(session, before_year=year or get_settings().election_year)
+    by_bridged_cpf: dict[str, list[str]] = {}
+    for mandate_id, ident in bridged.items():
+        by_bridged_cpf.setdefault(ident.cpf, []).append(mandate_id)
+
     result = ResolutionResult()
+    result.closed_mandates = len(bridged)
     link_rows: list[dict] = []
     review_rows: list[dict] = []
     person_updates: list[tuple[str, object]] = []
@@ -121,8 +141,37 @@ def resolve(session: Session, *, year: int | None = None) -> ResolutionResult:
             result.auto_strong += 1
             continue
 
+        # 2b. CPF recuperado do histórico do TSE (Casas que não publicam CPF).
+        if cand.cpf:
+            alvos = [
+                m
+                for m in by_bridged_cpf.get(cand.cpf, [])
+                if m in by_mandate and (sq, m) not in rejected
+            ]
+            if len(alvos) > 1:
+                # A mesma pessoa com mandatos em legislaturas diferentes: o que
+                # interessa ao leitor é o que ela exerce agora.
+                ativos = [m for m in alvos if by_mandate[m].mandate_active]
+                alvos = ativos if len(ativos) == 1 else []
+            if len(alvos) == 1:
+                emit_link(
+                    sq, by_mandate[alvos[0]], MatchMethod.cpf_via_tse, 1.0,
+                    ConfidenceTier.auto_strong,
+                )
+                result.auto_strong += 1
+                result.via_tse += 1
+                continue
+
         # 3. Probabilistic within UF.
-        pool = [p for p in index.candidates_in_uf(cand.uf) if (sq, str(p.mandate_id)) not in rejected]
+        pool = []
+        for p in index.candidates_in_uf(cand.uf):
+            if (sq, str(p.mandate_id)) not in rejected:
+                if _cpf_conflict(bridged.get(str(p.mandate_id)), cand.cpf):
+                    # O documento já disse que não é a mesma pessoa; deixar o
+                    # comparador de nomes propor o par de novo só encheria a fila
+                    # de revisão com o que já está decidido.
+                    continue
+                pool.append(p)
         hit = probabilistic.best_match(cand, pool)
         if hit.person is None or hit.score < REVIEW:
             result.unmatched += 1

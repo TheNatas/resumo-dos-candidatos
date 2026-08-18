@@ -59,6 +59,10 @@ class House(str, enum.Enum):
 
 class MatchMethod(str, enum.Enum):
     cpf_exact = "cpf_exact"
+    # CPF recuperado do histórico do próprio TSE para Casas que não o publicam
+    # (ALESC). O vínculo é igualdade de CPF, mas passa por um salto de nome de urna:
+    # método distinto para que a ficha não anuncie mais certeza do que existe.
+    cpf_via_tse = "cpf_via_tse"
     titulo_exact = "titulo_exact"
     probabilistic = "probabilistic"
     manual = "manual"
