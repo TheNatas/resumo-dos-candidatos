@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 import respx
 from sqlalchemy import select
 from tests.helpers import deputado_detail
 
-from resumo.db.models import Mandate, Person
+from resumo.db.models import House, Mandate, Person, Vote
 from resumo.ingestion.camara.client import CamaraClient
 from resumo.ingestion.camara.deputados import DeputadosCollector
+from resumo.ingestion.camara.votacoes import VotacoesCollector
 
 BASE = "https://dadosabertos.camara.leg.br/api/v2"
 
@@ -90,3 +92,96 @@ def test_short_and_degenerate_ranges():
     assert len(list(date_windows("2026-01-01", "2026-02-01"))) == 1
     # Fim antes do início não gera janela nenhuma, em vez de girar para sempre.
     assert list(date_windows("2026-08-18", "2026-01-01")) == []
+
+
+# ── Votações: inconsistência da fonte não pode custar a coleta inteira ────────
+def _seed_camara_mandate(session):
+    person = Person(nome_normalizado="JOSE", nome_civil="JOSE")
+    session.add(person)
+    session.flush()
+    mandate = Mandate(
+        house=House.CAMARA, house_member_id="1", id_legislatura=57,
+        person_id=person.id, sigla_uf="SC", nome_parlamentar="JOSE",
+    )
+    session.add(mandate)
+    session.commit()
+    return mandate
+
+
+def _votacoes_listing(ids):
+    return {"dados": [{"id": i, "data": "2026-02-10"} for i in ids], "links": []}
+
+
+@respx.mock
+def test_votacao_missing_from_the_source_is_skipped_not_fatal(session):
+    """A listagem devolve ids cujos endpoints de detalhe não existem. Isso derrubou
+    a coleta inteira em produção: uma votação inconsistente apagou todas as outras."""
+    _seed_camara_mandate(session)
+    respx.get(url__regex=r"/votacoes\?").mock(
+        return_value=httpx.Response(200, json=_votacoes_listing(["BOA-1", "SUMIDA-2"]))
+    )
+    respx.get(url__regex=r"/votacoes/[^/]+/orientacoes").mock(
+        return_value=httpx.Response(200, json={"dados": []})
+    )
+    respx.get(url__regex=r"/votacoes/BOA-1/votos").mock(
+        return_value=httpx.Response(
+            200,
+            json={"dados": [{"deputado_": {"id": 1, "siglaPartido": "PT"}, "tipoVoto": "Sim"}]},
+        )
+    )
+    respx.get(url__regex=r"/votacoes/SUMIDA-2/votos").mock(return_value=httpx.Response(404))
+
+    result = VotacoesCollector().run(
+        session, data_inicio="2026-02-01", data_fim="2026-02-28"
+    )
+
+    # A votação boa foi guardada, a inconsistente foi pulada — e isso é dito.
+    assert result.status == "ingested"
+    assert result.row_count == 1
+    assert "1 sem /votos" in result.detail
+    assert session.execute(select(Vote)).scalars().all()[0].id_votacao == "BOA-1"
+
+
+@respx.mock
+def test_a_broken_source_still_raises(session):
+    """Só 404 é tolerado. Um 500 significa fonte quebrada, não inconsistente — e
+    engolir isso publicaria silêncio como se fosse ausência de dado."""
+    _seed_camara_mandate(session)
+    respx.get(url__regex=r"/votacoes\?").mock(
+        return_value=httpx.Response(200, json=_votacoes_listing(["X-1"]))
+    )
+    respx.get(url__regex=r"/votacoes/[^/]+/orientacoes").mock(
+        return_value=httpx.Response(200, json={"dados": []})
+    )
+    respx.get(url__regex=r"/votacoes/X-1/votos").mock(return_value=httpx.Response(500))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        VotacoesCollector().run(session, data_inicio="2026-02-01", data_fim="2026-02-28")
+
+
+@respx.mock
+def test_definitive_statuses_are_not_retried(session):
+    """O cliente declarava um conjunto de status "retryable" e mesmo assim repetia
+    todos. Um 404 custava 1+2+4 s de backoff por recurso inexistente."""
+    route = respx.get(url__regex=r"/deputados/999$").mock(return_value=httpx.Response(404))
+
+    with CamaraClient() as client, pytest.raises(httpx.HTTPStatusError):
+        client.get("deputados/999")
+
+    assert route.call_count == 1, "404 não deve ser repetido"
+
+
+@respx.mock
+def test_transient_statuses_are_still_retried(session):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"dados": []}) if calls["n"] > 1 else httpx.Response(503)
+
+    respx.get(url__regex=r"/deputados/1$").mock(side_effect=handler)
+
+    with CamaraClient() as client:
+        client.get("deputados/1")
+
+    assert calls["n"] == 2, "503 deve ser repetido até obter sucesso"

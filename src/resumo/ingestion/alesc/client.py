@@ -79,7 +79,10 @@ class AlescClient:
                 return resp
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else "?"
-                if attempt == self._max_retries - 1:
+                # Só status transitório merece nova tentativa. Um 404/400 é resposta
+                # definitiva da fonte: repetir três vezes com backoff só gasta 7 s por
+                # recurso inexistente e atrasa a coleta inteira.
+                if status not in _RETRYABLE or attempt == self._max_retries - 1:
                     raise
                 backoff = 2**attempt
                 logger.warning("ALESC %s on %s — retry in %ss", status, url, backoff)

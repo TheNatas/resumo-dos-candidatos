@@ -8,7 +8,9 @@ empty /votos and are skipped.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
+import httpx
 from sqlalchemy.orm import Session
 
 from resumo.config import get_settings
@@ -19,6 +21,8 @@ from resumo.ingestion.camara.common import mandate_map
 from resumo.ingestion.http import throttle
 from resumo.ingestion.ledger import record_ingestion, upsert
 from resumo.util import clean, parse_date
+
+log = logging.getLogger(__name__)
 
 # A API recusa a janela inteira com 400 "A diferença entre as datas não pode ser
 # maior que 3 meses". O limite é do endpoint, não de quem chama: fatiar aqui evita
@@ -79,6 +83,7 @@ class VotacoesCollector(Collector):
                 votacoes = votacoes[:limit]
 
             total = 0
+            missing: list[str] = []
             for v in votacoes:
                 id_votacao = str(v["id"])
                 throttle()
@@ -92,7 +97,23 @@ class VotacoesCollector(Collector):
                     pass
 
                 throttle()
-                votos = client.get(f"votacoes/{id_votacao}/votos").get("dados", [])
+                try:
+                    votos = client.get(f"votacoes/{id_votacao}/votos").get("dados", [])
+                except httpx.HTTPStatusError as exc:
+                    # A listagem devolve ids cujos endpoints de detalhe não existem
+                    # (404 na própria votação). Uma inconsistência da fonte em UMA
+                    # votação não pode custar a coleta inteira — some do log e some
+                    # do site. Só 404 é tolerado: 500 ou timeout continuam subindo,
+                    # porque aí a fonte está quebrada, não inconsistente.
+                    if exc.response is not None and exc.response.status_code == 404:
+                        missing.append(id_votacao)
+                        log.warning(
+                            "camara_votacoes: votação %s existe na listagem mas "
+                            "devolve 404 em /votos — pulada",
+                            id_votacao,
+                        )
+                        continue
+                    raise
                 rows = []
                 for voto in votos:
                     dep = voto.get("deputado_") or {}
@@ -121,7 +142,12 @@ class VotacoesCollector(Collector):
                 digest=f"count={total}",
                 row_count=total,
             )
-            return CollectorResult(self.name, "ingested", total, f"{len(votacoes)} votações")
+            detail = f"{len(votacoes)} votações"
+            if missing:
+                # Visível no resultado, não só no log: um salto nesse número é sinal
+                # de problema na fonte, e não dá para notar o que não é dito.
+                detail += f" · {len(missing)} sem /votos (404 na fonte)"
+            return CollectorResult(self.name, "ingested", total, detail)
         finally:
             if owns:
                 client.close()

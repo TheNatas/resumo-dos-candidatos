@@ -146,6 +146,17 @@ anotação visível e um resumo no job, e o passo não mente sobre o que acontec
 meses"`. O coletor agora fatia sozinho em janelas de 80 dias: o limite é do endpoint,
 e fazer todo caller lembrar dele é como o bug volta.
 
+**Inconsistência da fonte não pode custar a coleta inteira.** A listagem de
+`/votacoes` devolve ids cujos endpoints de detalhe respondem 404. Isso derrubava o
+coletor inteiro: uma votação inconsistente apagava todas as outras. Agora ela é pulada
+e contada no resultado (`N sem /votos`) — só 404 é tolerado, porque 500 significa
+fonte quebrada, não inconsistente, e engolir isso publicaria silêncio como se fosse
+ausência de dado.
+
+**Status definitivo não é repetido.** Os três clientes declaravam um conjunto de
+status transitórios e mesmo assim repetiam todos: cada 404 custava 1+2+4 s de backoff.
+Agora só 429/5xx são repetidos.
+
 **Fonte vazia não apaga dado.** Os coletores fazem upsert, então um endpoint fora do
 ar (a `/despesas` da Câmara devolveu vazio para todos os deputados em 18/08/2026) é
 no-op — o snapshot preserva o que já havia. Isso só dói no backfill frio, quando não

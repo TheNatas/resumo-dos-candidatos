@@ -18,6 +18,10 @@ from resumo.ingestion.http import make_client, throttle
 
 logger = logging.getLogger("resumo.ingestion.camara")
 
+# Transitórios: vale repetir. Qualquer outro status é resposta definitiva da
+# fonte, e repetir só atrasa a coleta.
+_RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
 
 class CamaraClient:
     def __init__(self, client: httpx.Client | None = None, max_retries: int = 4):
@@ -40,13 +44,14 @@ class CamaraClient:
         for attempt in range(self._max_retries):
             try:
                 resp = self._client.get(url, params=params)
-                if resp.status_code in (429, 500, 502, 503, 504):
-                    raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
                 resp.raise_for_status()
                 return resp.json()
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else "?"
-                if attempt == self._max_retries - 1:
+                # Só status transitório merece nova tentativa. Um 404/400 é resposta
+                # definitiva da fonte: repetir três vezes com backoff só gasta 7 s por
+                # recurso inexistente e atrasa a coleta inteira.
+                if status not in _RETRYABLE or attempt == self._max_retries - 1:
                     raise
                 backoff = 2**attempt
                 logger.warning("Câmara %s on %s — retry in %ss", status, url, backoff)

@@ -36,6 +36,10 @@ from resumo.ingestion.http import make_client
 
 logger = logging.getLogger("resumo.ingestion.senado")
 
+# Transitórios: vale repetir. Qualquer outro status é resposta definitiva da
+# fonte, e repetir só atrasa a coleta.
+_RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
 
 def _as_list(value: Any) -> list[Any]:
     """Normalize the legacy XML→JSON collapse of single-element arrays.
@@ -84,13 +88,14 @@ class SenadoClient:
         for attempt in range(self._max_retries):
             try:
                 resp = self._client.get(url, params=params)
-                if resp.status_code in (429, 500, 502, 503, 504):
-                    raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
                 resp.raise_for_status()
                 return resp.json()
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else "?"
-                if attempt == self._max_retries - 1:
+                # Só status transitório merece nova tentativa. Um 404/400 é resposta
+                # definitiva da fonte: repetir três vezes com backoff só gasta 7 s por
+                # recurso inexistente e atrasa a coleta inteira.
+                if status not in _RETRYABLE or attempt == self._max_retries - 1:
                     raise
                 backoff = 2**attempt
                 logger.warning("Senado %s on %s — retry in %ss", status, url, backoff)
