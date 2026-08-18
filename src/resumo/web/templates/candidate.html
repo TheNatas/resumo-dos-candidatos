@@ -24,10 +24,44 @@
           <li>📄 {{ p.filename or 'Proposta de governo' }} <em>({{ p.source }})</em></li>
         {% endfor %}
       </ul>
-    {% elif c.majoritario %}
+    {% elif c.requires_proposta %}
       <p class="muted">Proposta de governo ainda não disponível para esta candidatura.</p>
     {% else %}
-      <p class="muted">Cargo proporcional — sem proposta de governo oficial (obrigatória só para majoritários).</p>
+      <p class="muted">
+        A proposta de governo é obrigatória apenas para cargos executivos
+        (presidente, governador, prefeito). Não se aplica a {{ c.cargo|lower }}.
+      </p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Financiamento de campanha</h2>
+    {% set f = d.campaign_finance %}
+    {% if f.has_data %}
+      <ul class="stats">
+        <li><strong>R$ {{ '%.2f'|format(f.revenue_total) }}</strong><span>arrecadado</span></li>
+        <li><strong>R$ {{ '%.2f'|format(f.expense_total) }}</strong><span>despesas contratadas</span></li>
+        <li><strong>{{ f.revenue_count }}</strong><span>receitas declaradas</span></li>
+      </ul>
+      {% if d.top_donors %}
+        <h3>Maiores doadores</h3>
+        <ul class="donors">
+          {% for donor in d.top_donors %}
+            <li><span>{{ donor.nome or '—' }}</span><strong>R$ {{ '%.2f'|format(donor.total) }}</strong></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      <p class="note">Prestações consideradas: {{ f.filings|join(', ') }}. {{ f.note }}</p>
+    {% else %}
+      {# "Nothing filed yet" and "declared zero" look identical if you only print a
+         total — so say which one this is. #}
+      <p class="no-source">
+        <strong>Nenhuma prestação de contas publicada até agora.</strong><br>
+        O TSE só divulga os dados a partir da primeira janela de entrega
+        (parcial: 9–13/09/2026; contas finais: até 03/11/2026). A ausência aqui
+        significa que ainda não há entrega publicada — não que a campanha não
+        arrecadou.
+      </p>
     {% endif %}
   </section>
 
@@ -36,8 +70,17 @@
     {% if d.incumbent_confirmed %}
       {% set t = d.track_record %}
       <p class="confirmed">
-        Incumbente confirmado ({{ d.link.house }}) ·
-        vínculo {{ d.link.match_method }} ({{ '%.2f'|format(d.link.confidence_score) }}, {{ d.link.confidence_tier }})
+        {% if d.link.em_exercicio %}Mandato em exercício{% else %}Mandato{% endif %}
+        confirmado — <strong>{{ d.link.house_label }}</strong>{% if d.link.nome_parlamentar %}
+        (como {{ d.link.nome_parlamentar }}){% endif %}{% if d.link.situacao and not d.link.em_exercicio %},
+        situação <strong>{{ d.link.situacao|lower }}</strong>{% endif %}.
+        {% if not d.link.same_office %}
+          O histórico abaixo é desse mandato atual, não do cargo que disputa agora.
+        {% endif %}
+      </p>
+      <p class="note">
+        Vínculo por {{ d.link.match_method }} · confiança
+        {{ '%.2f'|format(d.link.confidence_score) }} ({{ d.link.confidence_tier }}).
       </p>
       <ul class="stats">
         <li><strong>{{ t.votes_total }}</strong><span>votos nominais</span></li>
@@ -47,8 +90,45 @@
         <li><strong>R$ {{ '%.2f'|format(t.expense_total) }}</strong><span>CEAP (líquido)</span></li>
       </ul>
       <p class="note">*{{ t.attendance_note }}</p>
-    {% else %}
+      {% if d.link.house_caveat %}
+        <p class="no-source">
+          <strong>Sobre os números desta Casa.</strong><br>
+          {{ d.link.house_caveat }}
+        </p>
+      {% endif %}
+
+      {% if d.amendments and d.amendments.count %}
+        <h3>Emendas parlamentares individuais</h3>
+        <ul class="stats">
+          <li><strong>{{ d.amendments.count }}</strong><span>emendas</span></li>
+          <li><strong>R$ {{ '%.2f'|format(d.amendments.empenhado_total) }}</strong><span>empenhado</span></li>
+          <li><strong>R$ {{ '%.2f'|format(d.amendments.pago_total) }}</strong><span>pago</span></li>
+        </ul>
+        <p class="note">{{ d.amendments.note }}</p>
+      {% endif %}
+
+      {# The cargo-level `partial` note and the house caveat carry the same
+         information; with a confirmed mandate the house one is the accurate
+         source, so only fall back to the cargo note when there is no caveat. #}
+      {% if c.history_status == 'partial' and not d.link.house_caveat %}
+        <p class="no-source">
+          <strong>Cobertura parcial desta Casa.</strong><br>
+          {{ c.history_note }}
+        </p>
+      {% endif %}
+
+    {# No track record: say WHY. The reasons mean very different things and
+       collapsing them into one message would misinform the reader. #}
+    {% elif c.history_status in ('available', 'partial') %}
       <p class="unconfirmed">Incumbência não confirmada — sem histórico de mandato vinculado a esta candidatura.</p>
+      {% if c.history_note %}<p class="note">{{ c.history_note }}</p>{% endif %}
+    {% elif c.history_status == 'not_applicable' %}
+      <p class="muted">{{ c.history_note }}</p>
+    {% else %}
+      <p class="no-source">
+        <strong>Sem fonte pública para este cargo.</strong><br>
+        {{ c.history_note }}
+      </p>
     {% endif %}
   </section>
 </article>

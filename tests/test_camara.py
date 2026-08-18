@@ -48,5 +48,5 @@ def test_deputados_collector_seeds_person_and_mandate(session):
     assert person.nome_normalizado == "JOSE DA SILVA"
     mandate = session.scalar(select(Mandate))
     assert mandate.person_id == person.id
-    assert mandate.sigla_uf == "SP"
+    assert mandate.sigla_uf == "SC"
     assert mandate.house_member_id == "1"

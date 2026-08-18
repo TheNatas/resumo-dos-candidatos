@@ -34,6 +34,10 @@ class EventosCollector(Collector):
         **_,
     ) -> CollectorResult:
         leg = id_legislatura or get_settings().id_legislatura
+        # In a state-scoped install the mandate map holds only that state's members;
+        # national roll-calls still list all 513, so rows for members we do not track
+        # are dropped rather than stored with a dangling mandate_id.
+        scoped = bool(get_settings().uf_list)
         owns = client is None
         client = client or CamaraClient()
         try:
@@ -57,7 +61,7 @@ class EventosCollector(Collector):
                 rows = []
                 for dep in presentes:
                     member_id = str(dep.get("id") or "")
-                    if not member_id:
+                    if not member_id or (scoped and member_id not in mandates):
                         continue
                     rows.append(
                         {

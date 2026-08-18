@@ -7,16 +7,19 @@ header { display:flex; align-items:baseline; gap:1rem; padding:1rem 1.5rem; back
 main { max-width:820px; margin:2rem auto; padding:0 1.25rem; }
 footer { max-width:820px; margin:3rem auto 2rem; padding:0 1.25rem; color:var(--muted); font-size:.8rem; }
 h1 { font-size:1.6rem; margin:.2rem 0; }
-.search { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
-.search h1 { width:100%; }
-.search input[type=search] { flex:1; min-width:240px; }
-input { padding:.6rem .75rem; border:1px solid var(--line); border-radius:8px; font-size:1rem; }
+.search h1 { margin-bottom:.15rem; }
+.search .scope { color:var(--muted); font-size:.8rem; margin:0 0 .9rem; }
+.filters { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+.filters input[type=search] { flex:1; min-width:240px; }
+input, select { padding:.6rem .75rem; border:1px solid var(--line); border-radius:8px; font-size:1rem; background:#fff; color:inherit; }
 input.uf { width:80px; text-transform:uppercase; }
+select.cargo { max-width:230px; }
 .cards { list-style:none; padding:0; margin:1.25rem 0; display:grid; gap:.6rem; }
 .card a { display:block; padding:.8rem 1rem; background:#fff; border:1px solid var(--line); border-radius:10px; text-decoration:none; color:inherit; }
 .card a:hover { border-color:var(--accent); }
 .card .meta { display:block; color:var(--muted); font-size:.85rem; margin-top:.15rem; }
-.badge { display:inline-block; margin-top:.35rem; font-size:.7rem; background:#eef4ff; color:var(--accent); padding:.1rem .5rem; border-radius:999px; }
+.badge { display:inline-block; margin-top:.35rem; margin-right:.3rem; font-size:.7rem; background:#eef4ff; color:var(--accent); padding:.1rem .5rem; border-radius:999px; }
+.badge-muted { background:#f2f4f7; color:var(--muted); }
 .empty, .muted { color:var(--muted); }
 .back { color:var(--accent); text-decoration:none; font-size:.9rem; }
 .ficha { background:#fff; border:1px solid var(--line); border-radius:12px; padding:1.5rem; margin-top:1rem; }
@@ -26,9 +29,18 @@ input.uf { width:80px; text-transform:uppercase; }
 section h2 { font-size:1.05rem; margin:1.5rem 0 .5rem; }
 .confirmed { color:#067647; font-size:.85rem; }
 .unconfirmed { color:#b54708; background:#fffaeb; border:1px solid #fedf89; border-radius:8px; padding:.6rem .8rem; }
+/* "No public source" is a statement about the DATA, not the candidate — styled
+   neutrally so it never reads as a warning about the person. */
+.no-source { color:var(--muted); background:#f8fafc; border:1px solid var(--line); border-left:3px solid var(--muted); border-radius:8px; padding:.7rem .9rem; font-size:.88rem; line-height:1.5; }
+.no-source strong { color:var(--ink); }
 .stats { list-style:none; padding:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:.6rem; }
 .stats li { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:.7rem; text-align:center; }
 .stats strong { display:block; font-size:1.2rem; }
 .stats span { color:var(--muted); font-size:.72rem; }
 .note { color:var(--muted); font-size:.75rem; }
 .proposals { list-style:none; padding:0; }
+section h3 { font-size:.85rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:1.2rem 0 .5rem; }
+.donors { list-style:none; padding:0; margin:0; }
+.donors li { display:flex; justify-content:space-between; gap:1rem; padding:.45rem .6rem; border-bottom:1px solid var(--line); font-size:.9rem; }
+.donors li:last-child { border-bottom:0; }
+.donors span { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

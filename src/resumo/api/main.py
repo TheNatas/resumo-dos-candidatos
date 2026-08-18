@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from resumo import cargos
 from resumo.api import queries
 from resumo.api.deps import get_session
 from resumo.api.routers import candidates
@@ -23,9 +24,28 @@ app.include_router(candidates.router)
 app.mount("/static", StaticFiles(directory=str(_WEB / "static")), name="static")
 
 
+def _scope() -> dict:
+    """The install's declared scope, surfaced so the public page never implies it
+    covers more than it does."""
+    s = get_settings()
+    ufs = s.uf_list
+    codes = sorted(s.cargo_set) or sorted(cargos.CARGO_NAMES)
+    return {
+        "election_year": s.election_year,
+        "ufs": list(ufs),
+        "cargos": [{"cd_cargo": c, "nome": cargos.CARGO_NAMES.get(c, str(c))} for c in codes],
+    }
+
+
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "election_year": get_settings().election_year}
+    return {"status": "ok", **_scope()}
+
+
+@app.get("/api/scope")
+def scope() -> dict:
+    """What this deployment actually covers (state + offices + election year)."""
+    return _scope()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -33,12 +53,34 @@ def index(
     request: Request,
     q: str | None = None,
     uf: str | None = None,
+    cargo: str | None = None,
     session: Session = Depends(get_session),
 ):
-    results = queries.search_candidacies(session, q=q, uf=uf, limit=50) if (q or uf) else []
+    scope_info = _scope()
+    results = (
+        queries.search_candidacies(session, q=q, uf=uf, cargo=cargo, limit=50)
+        if (q or uf or cargo)
+        else []
+    )
+    ufs = scope_info["ufs"]
+    scope_label = (
+        f"Eleições {scope_info['election_year']} · "
+        + (", ".join(ufs) if ufs else "Brasil")
+        + " · "
+        + ", ".join(c["nome"].title() for c in scope_info["cargos"])
+    )
     template = "_results.html" if request.headers.get("HX-Request") else "index.html"
     return templates.TemplateResponse(
-        request, template, {"results": results, "q": q or "", "uf": uf or ""}
+        request,
+        template,
+        {
+            "results": results,
+            "q": q or "",
+            "uf": uf or "",
+            "cargo": cargo or "",
+            "cargo_options": [(c["nome"], c["nome"].title()) for c in scope_info["cargos"]],
+            "scope_label": scope_label,
+        },
     )
 
 

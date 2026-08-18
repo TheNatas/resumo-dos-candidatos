@@ -11,7 +11,13 @@ from resumo.config import get_settings
 from resumo.db.models import Candidacy, CandidateAsset
 from resumo.ingestion.base import Collector, CollectorResult
 from resumo.ingestion.http import download_to_tempfile
-from resumo.ingestion.ledger import already_ingested, content_hash, record_ingestion, upsert
+from resumo.ingestion.ledger import (
+    already_ingested,
+    content_hash,
+    record_ingestion,
+    scoped_key,
+    upsert,
+)
 from resumo.ingestion.tse import ckan, parsing
 from resumo.util import clean, parse_date, parse_decimal, parse_int
 
@@ -35,9 +41,17 @@ class BemCandidatoCollector(Collector):
     name = "tse_bem_candidato"
 
     def run(
-        self, session: Session, *, source: Path | str | None = None, year: int | None = None, **_
+        self,
+        session: Session,
+        *,
+        source: Path | str | None = None,
+        year: int | None = None,
+        ufs: list[str] | None = None,
+        **_,
     ) -> CollectorResult:
-        year = year or get_settings().election_year
+        settings = get_settings()
+        year = year or settings.election_year
+        uf_scope = tuple(u.upper() for u in ufs) if ufs is not None else settings.uf_list
         tmp: Path | None = None
         if source is not None:
             data_path: Path | str = source
@@ -50,11 +64,14 @@ class BemCandidatoCollector(Collector):
             tmp, digest = download_to_tempfile(source_url)
             data_path = tmp
 
+        ledger_url = scoped_key(source_url, uf=",".join(uf_scope))
+
         try:
-            if already_ingested(session, source_url, digest):
+            if already_ingested(session, ledger_url, digest):
                 return CollectorResult(self.name, "skipped", 0, "unchanged (hash match)")
 
-            rows = [a for a in (_asset_row(r) for r in parsing.iter_records(data_path)) if a]
+            records = parsing.iter_records(data_path, ufs=uf_scope)
+            rows = [a for a in (_asset_row(r) for r in records) if a]
             # FK integrity: only keep assets whose candidacy was already ingested.
             known = {sq for (sq,) in session.execute(select(Candidacy.sq_candidato))}
             rows = [a for a in rows if a["sq_candidato"] in known]
@@ -66,9 +83,9 @@ class BemCandidatoCollector(Collector):
                 index_elements=["sq_candidato", "nr_ordem_bem"],
             )
             record_ingestion(
-                session, collector_name=self.name, source_url=source_url, digest=digest, row_count=n
+                session, collector_name=self.name, source_url=ledger_url, digest=digest, row_count=n
             )
-            return CollectorResult(self.name, "ingested", n)
+            return CollectorResult(self.name, "ingested", n, f"uf={','.join(uf_scope) or 'ALL'}")
         finally:
             if tmp is not None:
                 tmp.unlink(missing_ok=True)

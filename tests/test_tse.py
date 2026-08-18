@@ -32,7 +32,7 @@ def test_consulta_cand_ingests_and_derives_coalition(tmp_path, session):
     assert jose.nome_normalizado == "JOSE DA SILVA"  # latin-1 decoded + normalized
     assert jose.cpf_raw == "123.456.789-09"
     gov = session.get(Candidacy, "250000222")
-    assert gov.is_majoritario is True  # GOVERNADOR -> proposta-bearing
+    assert gov.is_majoritario is True  # GOVERNADOR -> majoritário
 
 
 def test_consulta_cand_is_idempotent(tmp_path, session):
@@ -61,7 +61,7 @@ def test_proposta_maps_pdf_to_candidate(tmp_path, session):
     session.commit()
 
     pdf_member = f"PROPOSTA_GOVERNO/{sq}-proposta.pdf"
-    src = _write(tmp_path, "proposta_governo_2022_SP.zip", make_proposta_zip(pdf_member))
+    src = _write(tmp_path, "proposta_governo_2022_SC.zip", make_proposta_zip(pdf_member))
     res = PropostaGovernoCollector().run(session, source=src, year=2022)
     session.commit()
 

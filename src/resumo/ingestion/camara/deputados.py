@@ -18,31 +18,23 @@ from resumo.ingestion.base import Collector, CollectorResult
 from resumo.ingestion.camara.client import CamaraClient
 from resumo.ingestion.http import throttle
 from resumo.ingestion.ledger import record_ingestion
-from resumo.util import clean, normalize_name, parse_date, valid_cpf
+from resumo.resolution.identity import resolve_person
+from resumo.util import clean, parse_date
 
 logger = logging.getLogger("resumo.ingestion.camara")
 
 
 def _get_or_create_person(session: Session, detail: dict) -> Person | None:
-    cpf = valid_cpf(detail.get("cpf"))
-    nome_civil = clean(detail.get("nomeCivil"))
-    nome_norm = normalize_name(nome_civil)
-    dob = parse_date(detail.get("dataNascimento"))
-    uf_nasc = clean(detail.get("ufNascimento"))
-
-    person: Person | None = None
-    if cpf:
-        person = session.execute(select(Person).where(Person.cpf == cpf)).scalar_one_or_none()
-    if person is None:
-        person = Person(cpf=cpf)
-        session.add(person)
-    # Refresh identity fields (Câmara detail is authoritative for incumbents).
-    person.nome_civil = nome_civil or person.nome_civil
-    person.nome_normalizado = nome_norm or person.nome_normalizado
-    person.data_nascimento = dob or person.data_nascimento
-    person.uf_nascimento = uf_nasc or person.uf_nascimento
-    session.flush()
-    return person
+    """Câmara is the richest identity source (it is the only house that publishes
+    CPF), but the Person it resolves to may already exist from another house — so
+    this goes through the shared resolver rather than matching on CPF alone."""
+    return resolve_person(
+        session,
+        cpf=detail.get("cpf"),
+        nome_civil=detail.get("nomeCivil"),
+        dob=parse_date(detail.get("dataNascimento")),
+        uf_nascimento=detail.get("ufNascimento"),
+    )
 
 
 def _upsert_mandate(session: Session, member_id: str, leg: int, status: dict, person: Person | None) -> None:
@@ -78,13 +70,20 @@ class DeputadosCollector(Collector):
         id_legislatura: int | None = None,
         client: CamaraClient | None = None,
         limit: int | None = None,
+        ufs: list[str] | None = None,
         **_,
     ) -> CollectorResult:
-        leg = id_legislatura or get_settings().id_legislatura
+        settings = get_settings()
+        leg = id_legislatura or settings.id_legislatura
+        uf_scope = tuple(u.upper() for u in ufs) if ufs is not None else settings.uf_list
         owns = client is None
         client = client or CamaraClient()
         try:
-            listed = list(client.paginate("deputados", {"idLegislatura": leg, "ordem": "ASC", "ordenarPor": "nome"}))
+            params = {"idLegislatura": leg, "ordem": "ASC", "ordenarPor": "nome"}
+            if uf_scope:
+                # The API takes siglaUf repeated; httpx encodes a list as repeats.
+                params["siglaUf"] = list(uf_scope)
+            listed = list(client.paginate("deputados", params))
             if limit:
                 listed = listed[:limit]
 
@@ -102,11 +101,15 @@ class DeputadosCollector(Collector):
             record_ingestion(
                 session,
                 collector_name=self.name,
-                source_url=f"{get_settings().camara_api_base}/deputados?idLegislatura={leg}",
+                source_url=(
+                    f"{settings.camara_api_base}/deputados?idLegislatura={leg}"
+                    + (f"&siglaUf={','.join(uf_scope)}" if uf_scope else "")
+                ),
                 digest=f"count={count}",
                 row_count=count,
             )
-            return CollectorResult(self.name, "ingested", count, f"legislatura {leg}")
+            scope = f"legislatura {leg} · uf={','.join(uf_scope) or 'ALL'}"
+            return CollectorResult(self.name, "ingested", count, scope)
         finally:
             if owns:
                 client.close()

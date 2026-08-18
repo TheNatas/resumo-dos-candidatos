@@ -25,6 +25,20 @@ def content_hash(data: bytes | str) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def scoped_key(source_url: str, **scope: object) -> str:
+    """Ledger key for an artifact read under a narrowing scope.
+
+    Idempotency keys on (source_url, content_hash). A scoped collector reading the
+    SAME bytes under a *wider* scope than last time must NOT be skipped as
+    "unchanged" — so the scope joins the key. `content_hash` stays the true artifact
+    hash, so provenance still points at the real bytes.
+    """
+    parts = ";".join(
+        f"{k}:{v}" for k, v in sorted(scope.items()) if v not in (None, "", (), frozenset())
+    )
+    return f"{source_url}#scope={parts}" if parts else source_url
+
+
 def already_ingested(session: Session, source_url: str, digest: str) -> bool:
     """True if this exact artifact was previously ingested successfully."""
     stmt = (

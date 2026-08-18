@@ -1,20 +1,84 @@
 # Resumo dos Candidatos
 
-Plataforma pública de transparência eleitoral para as **Eleições Gerais 2026**. Para
-cada candidato, agrega:
+Plataforma pública de transparência eleitoral para as **Eleições Gerais 2026 em Santa
+Catarina**. Para cada candidato, agrega:
 
-- **Propostas** da candidatura (começando pela *proposta de governo* oficial do TSE).
-- **Histórico de atuação pública** (votos, proposições, presença, gastos CEAP) —
-  **apenas para incumbentes em reeleição** que já exercem mandato.
+- **Propostas** da candidatura (*proposta de governo* oficial do TSE, quando o cargo exige).
+- **Bens declarados** e **financiamento de campanha** (receitas, despesas, doadores).
+- **Histórico de atuação pública** (votos, proposições, presença, gastos de gabinete,
+  emendas parlamentares) — **apenas para quem já exerce mandato**.
 
-Tudo construído sobre **dados oficiais, abertos e gratuitos** (TSE + Câmara dos
-Deputados), sem dependências de nuvem.
+Tudo sobre **dados oficiais, abertos e gratuitos**, sem chaves de API e sem nuvem.
 
-> **Status.** A base de candidatos 2026 só existe após o registro (prazo **15/08/2026**).
-> O sistema é construído e **validado agora com dados históricos de 2022/2024** (mesmos
-> esquemas) e **re-apontado para 2026 por configuração** (`RESUMO_ELECTION_YEAR`), sem
-> reescrita. Cobertura atual: **Câmara (deputados federais)**. Senado e assembleias
-> estaduais são fases posteriores.
+---
+
+## Escopo
+
+Deliberadamente estreito, para que a superfície pública possa ser auditada de ponta a
+ponta. Escopo é **configuração**, não código (`RESUMO_TARGET_UFS`, `RESUMO_TARGET_CARGOS`):
+
+```bash
+uv run resumo scope     # imprime o escopo efetivo
+```
+
+| Cargo (CD_CARGO) | Candidatura, bens, contas | Histórico de atuação |
+|---|---|---|
+| **Governador** (3) | ✅ + proposta de governo | ⛔ *não se aplica* — cargo executivo não tem votação nominal |
+| **Senador** (5) | ✅ (sem proposta — ver abaixo) | ✅ Senado Federal |
+| **Deputado federal** (6) | ✅ | ✅ Câmara dos Deputados |
+| **Deputado estadual** (7) | ✅ | ⚠️ **parcial** — ALESC (ver ressalva) |
+
+> **Majoritário ≠ tem proposta de governo.** Senador é eleito pelo sistema majoritário
+> mas **não** entrega proposta de governo — essa obrigação é só dos cargos *executivos*
+> (presidente, governador, prefeito; Lei 9.504/97, art. 11 §1º XI). O código trata os
+> dois predicados separadamente (`cargos.is_majoritario` vs `cargos.requires_proposta`).
+
+Ampliar é trocar variáveis de ambiente: `RESUMO_TARGET_UFS=""` roda nacional,
+`RESUMO_TARGET_CARGOS=""` inclui todos os cargos.
+
+---
+
+## Fontes
+
+| Fonte | O que traz | Auth |
+|---|---|---|
+| **TSE — CDN/CKAN** (`consulta_cand`, `bem_candidato`, `proposta_governo`) | candidaturas, bens, propostas | — |
+| **TSE — `prestacao_contas`** | receitas, despesas contratadas, pagamentos, doadores originários | — |
+| **Câmara dos Deputados API v2** | mandatos, votações, proposições, presença, CEAP | — |
+| **Senado Federal — dados abertos** | mandatos, votações, proposições, CEAPS | — |
+| **ALESC** (e-Legis + portal da transparência) | mandatos, votações nominais, proposições, presença, gastos de gabinete | — |
+| **CGU — `EmendasParlamentares.zip`** | emendas parlamentares individuais (empenhado/liquidado/pago) | — |
+
+**Nenhuma fonte exige chave de API.** Para emendas isso foi uma escolha: a API do
+Portal da Transparência exigiria `chave-api-dados`, devolve 15 linhas por página e não
+filtra por UF — enquanto o arquivo em lote da CGU é *mais rico* (traz município, UF,
+programa e ação, que a API não devolve).
+
+### Ressalvas de fonte que a interface exibe explicitamente
+
+- **ALESC — cobertura parcial.** Gastos, proposições e presença são completos, mas
+  **~96% das matérias são decididas em votação simbólica**, que por definição não
+  registra a posição individual de cada deputado. Restam ~200–250 votos nominais em
+  toda a legislatura, e o e-Legis não tem nada anterior a **fev/2023**. Números de
+  votação **não são comparáveis** com os de deputados federais.
+- **Senado — 57% das votações da legislatura 57 são secretas.** Nelas o voto individual
+  não é publicado (o campo vem como `"Votou"`); só os totais agregados existem. Por
+  isso um senador tem *ordens de grandeza* menos votos nominais que um deputado
+  federal, sem que isso diga nada sobre ele.
+- **ALESC — dois dos três CSVs do portal são aproveitáveis.**
+  `gabinetes-parlamentares` e `diarias` identificam o deputado;
+  `despesas/csv` é o empenho da instituição e **não tem coluna de deputado alguma**,
+  então não é ingerido (fica registrado em `UNSUPPORTED_DATASETS` com o motivo, em vez
+  de ser atribuído por adivinhação).
+- **Nem toda linha de despesa da ALESC casa com um deputado.** O portal usa o nome
+  civil (`CARLOS HENRIQUE LIMA`) e o e-Legis o nome parlamentar (`Sargento Lima`).
+  Quando o casamento não é exato, a linha fica **sem atribuição e é registrada em log**
+  — pôr o gasto de um deputado na ficha de outro seria pior que não exibi-lo.
+- **Emendas — não existe "valor autorizado" na fonte.** O empenhado é o melhor
+  indicador disponível e é rotulado como tal. Só emendas **individuais** são
+  atribuíveis a um parlamentar (bancada, comissão e relator são coletivas).
+- **Presença é derivada**, não publicada: na Câmara vem de listas de eventos, no Senado
+  dos códigos de comparecimento das votações. Sempre rotulada como derivada.
 
 ---
 
@@ -23,115 +87,188 @@ Deputados), sem dependências de nuvem.
 ```
 [Coletores CLI idempotentes]  ─►  [Postgres normalizado]  ─►  [FastAPI + front Jinja/htmx]
  cron-friendly, ledger de            vínculo candidato↔mandato     busca + ficha pública
- proveniência (RawIngestion)         como ARESTA CENTRAL           (histórico só p/ incumbente)
-        │
-        └─ fontes oficiais: TSE CDN/CKAN (CSV/PDF em lote) + Câmara API v2 (JSON)
+ proveniência (RawIngestion)         como ARESTA CENTRAL           (histórico só p/ mandato)
 ```
 
 A peça central é **`CandidateMandateLink`** — uma aresta materializada e auditável
 (*"esta candidatura 2026 é a mesma pessoa que exerce este mandato"*) com método de
-match, confiança e proveniência. O front só exibe histórico quando essa aresta confirma
-reeleição de incumbente em um nível de confiança aceito; caso contrário mostra
-*"incumbência não confirmada"* — nunca um vínculo adivinhado.
+match, confiança e proveniência.
+
+O vínculo é **entre casas**, de propósito: um deputado federal concorrendo ao Senado é
+o caso normal, e o histórico que interessa ao leitor é o da Câmara. A aresta significa
+*"tem mandato"*, não *"disputa a mesma cadeira"*.
 
 **Stack:** Python 3.11+ · SQLAlchemy 2 + Alembic · Postgres (`pg_trgm`/`unaccent`) ·
-httpx · polars/csv · rapidfuzz (Splink opcional) · FastAPI · Typer · uv.
+httpx · rapidfuzz (Splink opcional) · FastAPI · Typer · uv.
 
 ---
 
 ## Quickstart
 
-Pré-requisitos: **uv**, **Docker** (Postgres).
+Pré-requisitos: **uv**, **Docker**.
 
 ```bash
-uv sync --extra dev                 # instala dependências (+ extras de teste)
-cp .env.example .env                # ajuste se quiser; padrões já funcionam
-docker compose up -d                # Postgres em localhost:5435
-uv run resumo db-upgrade            # aplica as migrações (cria o schema)
+uv sync --extra dev
+cp .env.example .env
+docker compose up -d                # Postgres em localhost:5439
+uv run resumo db-upgrade
+uv run resumo scope                 # confirme o escopo antes de coletar
 ```
 
-Coletar, resolver e servir (validação com dados de 2022/2024):
-
 ```bash
-# 1. Câmara — mandatos + identidade (CPF vem do detalhe). Use --limit para amostrar.
-uv run resumo collect camara-deputados --legislatura 57 --limit 20
-uv run resumo collect camara-despesas  --anos 2024 --limit 20
-uv run resumo collect camara-proposicoes --limit 20
-uv run resumo collect camara-votacoes  --inicio 2024-03-01 --fim 2024-03-31
-uv run resumo collect camara-eventos   --inicio 2024-03-01 --fim 2024-03-31
+# 1. TSE — candidaturas, bens, propostas, contas de campanha
+uv run resumo collect tse-candidates
+uv run resumo collect tse-assets
+uv run resumo collect tse-proposta          # sem --uf: usa as UFs do escopo
+uv run resumo collect tse-contas            # vazio até set/2026 — ver calendário
 
-# 2. TSE — candidaturas + proposta de governo (baixa em lote do CDN; ou --source arquivo local)
-uv run resumo collect tse-candidates --year 2022
-uv run resumo collect tse-assets     --year 2022
-uv run resumo collect tse-proposta   --year 2022 --uf SP
+# 2. Mandatos SEMPRE primeiro: os demais coletores só guardam linhas de quem
+#    já tem mandato em base, e a ponte das emendas casa pelo nome do mandato.
+uv run resumo collect camara-deputados
+uv run resumo collect senado-senadores
 
-# 3. Resolução — materializa o vínculo candidato↔mandato
-uv run resumo resolve --year 2022
+# 3. Histórico de atuação
+uv run resumo collect camara-despesas    --anos 2023,2024,2025,2026
+uv run resumo collect camara-proposicoes
+uv run resumo collect camara-votacoes    --inicio 2026-01-01 --fim 2026-08-18
+uv run resumo collect camara-eventos     --inicio 2026-01-01 --fim 2026-08-18
+uv run resumo collect senado-despesas    --anos 2023,2024,2025,2026
+uv run resumo collect senado-proposicoes
+uv run resumo collect senado-votacoes    --inicio 2026-01-01 --fim 2026-08-18
+uv run resumo collect alesc-deputados
+uv run resumo collect alesc-despesas     --anos 2025,2026
+uv run resumo collect alesc-votacoes     --inicio 2026-01-01 --fim 2026-08-18
+uv run resumo collect alesc-presenca     --inicio 2026-01-01 --fim 2026-08-18
+uv run resumo collect alesc-proposicoes  --anos 2026
 
-# 4. Front público
+# 4. Emendas parlamentares (arquivo único da CGU, ~32 MB), depois a ponte autor↔mandato
+uv run resumo collect emendas
+uv run resumo link-emendas-authors
+
+# 5. Resolução — materializa os vínculos candidatura↔mandato
+uv run resumo resolve --year 2026
+
+# 6. Front público
 uv run resumo serve                 # http://127.0.0.1:8000
 ```
 
-> Os coletores são **idempotentes**: re-rodar com a mesma fonte é um *no-op* quando o
-> hash do artefato não mudou (ver `RawIngestion`). Bons para `cron`.
+> **Ordem importa.** `link-emendas-authors` e todos os coletores de histórico
+> dependem dos mandatos já coletados. Rodar fora de ordem não quebra nada — só
+> produz resultado vazio até você coletar os mandatos e repetir.
 
-### Re-apontar para 2026
-
-Quando o registro abrir (ago/2026), troque a configuração — **sem mudar código**:
-
-```bash
-# no .env
-RESUMO_ELECTION_YEAR=2026
-```
-
-Os coletores TSE passam a baixar `consulta_cand_2026.zip` etc.; a legislatura da Câmara
-(57 = 2023–2027) já cobre os incumbentes que podem se recandidatar.
+> Os coletores são **idempotentes**: re-rodar com a mesma fonte é *no-op* quando o hash
+> do artefato não mudou (`RawIngestion`). Bons para `cron`. A chave do ledger inclui o
+> **escopo** — ampliar o escopo re-ingere o mesmo arquivo, em vez de pulá-lo como
+> "inalterado".
 
 ---
 
-## Modelo de dados (resumo)
+## Calendário dos dados (2026)
 
-`Person` (identidade canônica) · `Candidacy` (TSE) · `Mandate` (Câmara/Senado) ·
-**`CandidateMandateLink`** (aresta central) · `GovernmentProposal` · `Vote` ·
-`Proposition` · `AttendanceRecord` · `Expense` · `CandidateAsset` · `Coalition` ·
-`ReviewQueue` · `RawIngestion` (proveniência/idempotência). Definições em
-[src/resumo/db/models.py](src/resumo/db/models.py).
+Registro fechou em **15/08/2026**, então candidaturas, bens e propostas **já existem**.
+Prestação de contas **não**:
+
+| Dado | Disponível |
+|---|---|
+| Candidaturas, bens, propostas de governo | ✅ agora (arquivo regenerado diariamente ~04:00 BRT) |
+| Relatórios financeiros (72 h por recurso) | 🟡 desde 20/07, volume mínimo |
+| **Prestação parcial** | 🔴 entrega 9–13/09, publicação ~13–15/09/2026 |
+| **Contas finais** (1º turno) | 🔴 até 03/11/2026 |
+| Contas finais (2º turno) | 🔴 até 14/11/2026 |
+
+O coletor de contas trata arquivo vazio como resultado normal (`empty`), não como erro
+— rode em `cron` desde já.
+
+---
+
+## Modelo de dados
+
+`Person` · `Candidacy` · `Mandate` · **`CandidateMandateLink`** · `GovernmentProposal` ·
+`Vote` · `Proposition` · `AttendanceRecord` · `Expense` · `CandidateAsset` · `Coalition` ·
+`CampaignRevenue` · `CampaignRevenueOriginator` · `CampaignExpense` · `CampaignPayment` ·
+`BudgetAmendment` · `AmendmentAuthorLink` · `ReviewQueue` · `RawIngestion`.
+Definições em [src/resumo/db/models.py](src/resumo/db/models.py).
 
 ## Resolução de identidade
 
-Determinística primeiro (CPF exato é o caminho dominante, pois TSE 2022 e o detalhe da
-Câmara expõem CPF), com fallback probabilístico (rapidfuzz; Splink opcional via
-`uv sync --extra resolution`). Níveis de confiança:
+Cada casa publica um conjunto diferente de identificadores, e isso governa a confiança:
 
-- **auto_strong / auto_weak** → vínculo materializado e exibido publicamente.
-- **review** → vai para a `ReviewQueue` (homônimos, score baixo) e **não** aparece no
-  front até decisão manual:
+| Casa | CPF | Nascimento | Ponte disponível | Tier alcançável |
+|---|---|---|---|---|
+| Câmara | ✅ | ✅ | CPF (determinístico) | `auto_strong` |
+| Senado | ❌ **não publica** | ✅ | nome civil + nascimento | `auto_strong` |
+| ALESC | ❌ | ❌ | só nome | `auto_weak` (teto) |
+
+`resolution/identity.py` reúne a mesma pessoa vista por casas diferentes. **Nome
+sozinho nunca funde dois registros** — duas pessoas homônimas são indistinguíveis sem
+um campo corroborante, e uma fusão errada atribuiria o histórico de uma a outra. Uma
+duplicata é recuperável; uma fusão errada, não.
+
+Pelo mesmo motivo, um match sustentado **apenas pelo nome** é limitado a `auto_weak`
+(`probabilistic.NAME_ONLY_CAP`) — nunca alcança o mesmo nível de um match por CPF.
+
+- **auto_strong / auto_weak** → vínculo publicado (o nível aparece na ficha).
+- **review** → fila manual, **não** aparece no front:
 
 ```bash
 uv run resumo review list
-uv run resumo review decide <review_id> match   # match | no_match | uncertain
-uv run resumo resolve                           # aplica os overrides (autoritativos)
+uv run resumo review decide <review_id> match
+uv run resumo resolve
 ```
 
 ## Testes
 
 ```bash
-docker compose up -d        # Postgres é necessário (usa o banco resumo_test)
+docker compose up -d
 uv run pytest -q
 ```
 
-Cobre parsing TSE Latin-1 + idempotência, paginação da Câmara (mock respx),
-regras de resolução (CPF exato, homônimo→revisão, sem-match) e a API (gating do
-histórico). Sem chamadas a APIs reais no CI.
+Cobre parsing TSE Latin-1, filtro de UF/cargo, idempotência incluindo mudança de
+escopo, paginação da Câmara (mock respx), taxonomia de cargos, identidade entre casas,
+regras de resolução e o gating do histórico na API. Sem chamadas de rede.
 
 ## Conformidade
 
-Dados públicos (LAI) — republicar é legítimo; proveniência registrada. Histórico nunca
-é vinculado por palpite (limite de confiança publicado, mecanismo de correção). CPF é
-usado para o match mas **não** exibido na UI pública (LGPD). Metodologia de qualquer
-métrica derivada (ex.: faltas) é documentada e rotulada como derivada.
+Dados públicos (LAI) — republicar é legítimo; proveniência registrada em
+`RawIngestion`. Histórico nunca é vinculado por palpite: limite de confiança publicado,
+nível exibido, fila de revisão manual. CPF é usado para o match mas **não** exibido na
+UI (LGPD). Métricas derivadas (presença) são rotuladas como derivadas.
 
-## Roadmap (pós-MVP)
+**Ausência de dado nunca é apresentada como juízo sobre o candidato.** A ficha
+distingue quatro casos e diz qual é: histórico disponível mas sem incumbência
+confirmada · cargo executivo (não se aplica) · cobertura parcial da Casa · sem fonte
+pública.
 
-S5 Senado + assembleias estaduais · S6 extração/estruturação do texto das propostas ·
-S7 camada de avaliação/rankings (presença, fidelidade partidária, anomalias CEAP).
+## O que foi verificado contra dados reais
+
+Não é uma lista de testes — é o que já rodou contra as fontes de produção:
+
+| Verificação | Resultado |
+|---|---|
+| Candidaturas SC 2026 | 658 (8 governador · 13 senador · 229 dep. federal · 408 dep. estadual) |
+| Bens declarados · propostas de governo | 3.428 · 8 (uma por candidatura a governador) |
+| Mandatos | 26 Câmara · 9 Senado · 61 ALESC |
+| Vínculo candidatura↔mandato (2026) | 20 (18 `cpf_exact`, 2 `probabilistic` via nome+nascimento) |
+| **Contas de campanha 2022/SC — receitas** | R$ 208.484.026,62 — **bate exatamente** com a fonte |
+| **— despesas contratadas** | 58.320 linhas / R$ 204.602.522,45 — **exato** |
+| **— despesas pagas** | 65.300 linhas / R$ 196.387.519,05 — **exato** |
+| — conferência por candidato | idêntico ao `divulgacandcontas` (36 linhas / R$ 305.370,83) |
+| Emendas SC (todos os anos) | 2.277 linhas · 132/236 códigos SIOP vinculados |
+| Despesas ALESC 2025–26 | 26.593 linhas (823 sem atribuição, todas registradas em log) |
+
+Duas correções de integridade que essa validação revelou, ambas silenciosas até serem
+medidas contra a fonte:
+
+- **`SQ_RECEITA` não é chave.** Usá-la como PK descartava ~0,2% da receita declarada
+  (72 sequências cobrindo 241 linhas que são dinheiro diferente: mesmo candidato,
+  mesmo turno, mesma prestação, valores distintos). A identidade passou a ser hash de
+  linha, e o total passou a bater na casa dos centavos.
+- **`-4` é sentinela do TSE**, não um valor. Era parseado como R$ −4,00.
+
+## Roadmap
+
+Extração/estruturação do texto das propostas · camada de avaliação (fidelidade
+partidária, anomalias de despesa) · enriquecimento das emendas via Transferegov para
+recuperar o município beneficiário quando a fonte diz "MÚLTIPLO".
+
+---

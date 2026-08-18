@@ -26,13 +26,13 @@ def _seed_incumbent(session):
     session.flush()
     mandate = Mandate(
         house=House.CAMARA, house_member_id="1", id_legislatura=57, person_id=person.id,
-        sigla_uf="SP", nome_parlamentar="JOSE", data_fim=None,
+        sigla_uf="SC", nome_parlamentar="JOSE", data_fim=None,
     )
     session.add(mandate)
     session.flush()
     session.add(
         Candidacy(
-            sq_candidato="C1", ano_eleicao=2022, sg_uf="SP", cd_cargo=6, ds_cargo="DEPUTADO FEDERAL",
+            sq_candidato="C1", ano_eleicao=2026, sg_uf="SC", cd_cargo=6, ds_cargo="DEPUTADO FEDERAL",
             nome_candidato="JOSE DA SILVA", nome_urna="JOSE", nome_normalizado="JOSE DA SILVA",
             sg_partido="PT", is_majoritario=False,
         )
@@ -40,7 +40,7 @@ def _seed_incumbent(session):
     # an unlinked candidacy
     session.add(
         Candidacy(
-            sq_candidato="C2", ano_eleicao=2022, sg_uf="SP", cd_cargo=6, ds_cargo="DEPUTADO FEDERAL",
+            sq_candidato="C2", ano_eleicao=2026, sg_uf="SC", cd_cargo=6, ds_cargo="DEPUTADO FEDERAL",
             nome_candidato="ANA PEREIRA", nome_normalizado="ANA PEREIRA", sg_partido="PSDB",
         )
     )

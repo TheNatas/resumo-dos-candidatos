@@ -14,10 +14,13 @@ from resumo.resolution.records import PersonRec
 class PersonIndex:
     def __init__(self, persons: list[PersonRec]):
         self.by_cpf: dict[str, PersonRec] = {}
+        self.by_titulo: dict[str, PersonRec] = {}
         self.by_uf: dict[str, list[PersonRec]] = defaultdict(list)
         for p in persons:
             if p.cpf:
                 self.by_cpf[p.cpf] = p
+            if p.titulo:
+                self.by_titulo[p.titulo] = p
             if p.uf:
                 self.by_uf[p.uf].append(p)
 

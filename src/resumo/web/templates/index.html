@@ -2,12 +2,23 @@
 {% block content %}
 <section class="search">
   <h1>Busque um candidato</h1>
-  <input type="search" name="q" placeholder="Nome do candidato…" value="{{ q }}"
-         hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms, search"
-         hx-include="[name='uf']" autofocus>
-  <input type="text" name="uf" placeholder="UF" maxlength="2" value="{{ uf }}"
-         hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms"
-         hx-include="[name='q']" class="uf">
+  <p class="scope">{{ scope_label }}</p>
+  <div class="filters">
+    <input type="search" name="q" placeholder="Nome do candidato…" value="{{ q }}"
+           hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms, search"
+           hx-include="[name='uf'],[name='cargo']" autofocus>
+    <select name="cargo" class="cargo"
+            hx-get="/" hx-target="#results" hx-trigger="change"
+            hx-include="[name='q'],[name='uf']">
+      <option value="">Todos os cargos</option>
+      {% for value, label in cargo_options %}
+        <option value="{{ value }}" {% if cargo == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="uf" placeholder="UF" maxlength="2" value="{{ uf }}"
+           hx-get="/" hx-target="#results" hx-trigger="keyup changed delay:300ms"
+           hx-include="[name='q'],[name='cargo']" class="uf">
+  </div>
 </section>
 <section id="results">
   {% include "_results.html" %}
