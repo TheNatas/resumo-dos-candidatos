@@ -402,7 +402,91 @@ def review_decide(
     typer.echo(f"review {review_id} -> {decision} (re-run `resumo resolve` to apply)")
 
 
+@review.command("validate")
+def review_validate(
+    file: Path = typer.Option(
+        Path("review-decisions.yml"), "--file", "-f", help="Arquivo de decisões."
+    ),
+) -> None:
+    """Valida o arquivo de decisões sem tocar no banco (roda em CI a cada push)."""
+    from resumo.review import DecisionFileError, load_decisions
+
+    try:
+        decisions = load_decisions(file)
+    except DecisionFileError as exc:
+        typer.echo(f"{file}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{file}: {len(decisions)} decisão(ões), formato válido")
+
+
+@review.command("apply")
+def review_apply(
+    file: Path = typer.Option(
+        Path("review-decisions.yml"), "--file", "-f", help="Arquivo de decisões."
+    ),
+    strict: bool = typer.Option(
+        False, "--strict", help="Falha se alguma decisão não puder ser aplicada."
+    ),
+) -> None:
+    """Aplica as decisões versionadas à fila de revisão (rode antes de `resolve`)."""
+    from resumo.review import DecisionFileError, apply_decisions, load_decisions
+
+    try:
+        decisions = load_decisions(file)
+    except DecisionFileError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    with session_scope() as session:
+        result = apply_decisions(session, decisions)
+
+    typer.echo(str(result))
+    for label in result.missing_mandate:
+        typer.echo(f"  sem mandato em base: {label}")
+    for label in result.missing_queue:
+        typer.echo(f"  par não está na fila: {label}")
+    if strict and result.skipped:
+        raise typer.Exit(code=1)
+
+
+@review.command("export")
+def review_export(
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Escreve em arquivo."),
+    limit: Optional[int] = typer.Option(None, "--limit", help="Máximo de pendências."),
+) -> None:
+    """Exporta a fila pendente no formato de `review-decisions.yml`."""
+    from resumo.review import export_pending
+
+    with session_scope() as session:
+        text = export_pending(session, limit=limit)
+    if out:
+        out.write_text(text, encoding="utf-8")
+        typer.echo(f"{out} escrito")
+    else:
+        typer.echo(text)
+
+
 # ── Serve ─────────────────────────────────────────────────────────────────────
+@app.command("render")
+def render(
+    out: Path = typer.Option(Path("_site"), "--out", help="Diretório de saída."),
+    base_url: Optional[str] = typer.Option(
+        None, "--base-url", help="Prefixo de URL. Omitir = RESUMO_SITE_BASE_URL."
+    ),
+    site_url: Optional[str] = typer.Option(
+        None, "--site-url", help="URL absoluta do site; habilita sitemap.xml."
+    ),
+    clean: bool = typer.Option(True, help="Apaga o diretório de saída antes de gerar."),
+) -> None:
+    """Renderiza o site estático (mesmos templates e queries do app vivo)."""
+    from resumo.render import render_site
+
+    with session_scope() as session:
+        result = render_site(
+            session, out=out, base_url=base_url, site_url=site_url, clean=clean
+        )
+    typer.echo(str(result))
+
+
 @app.command("serve")
 def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
     import uvicorn

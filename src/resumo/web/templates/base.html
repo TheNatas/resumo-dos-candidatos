@@ -4,20 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Resumo dos Candidatos{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <link rel="stylesheet" href="{{ base_url }}/static/style.css">
+  {% if not static_mode %}<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>{% endif %}
 </head>
 <body>
   <header>
-    <a href="/" class="brand">Resumo dos Candidatos</a>
-    <span class="tag">Transparência Eleitoral 2026 · dados oficiais</span>
+    <a href="{{ base_url }}/" class="brand">Resumo dos Candidatos</a>
+    <span class="tag">Transparência Eleitoral {{ election_year }} · dados oficiais</span>
   </header>
   <main>
     {% block content %}{% endblock %}
   </main>
   <footer>
-    <p>Dados públicos (TSE · Câmara dos Deputados). Histórico exibido apenas para
-    incumbentes confirmados; metodologia e fontes documentadas.</p>
+    <p>Dados públicos (TSE · Câmara · Senado · ALESC · CGU). Histórico exibido
+    apenas para incumbentes confirmados.
+    <a href="{{ base_url }}/sobre/">Fontes, ressalvas e metodologia →</a></p>
+    {% if generated_at %}<p class="note">Página gerada em {{ generated_at }} a partir
+    dos arquivos oficiais mais recentes.</p>{% endif %}
   </footer>
 </body>
 </html>

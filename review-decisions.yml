@@ -1,0 +1,38 @@
+# Decisões manuais do vínculo candidatura↔mandato.
+#
+# Este arquivo é a fonte de verdade. O build aplica o que está aqui ANTES de rodar
+# `resolve`; uma decisão tomada só no banco local se perde no próximo rebuild, e o
+# que está aqui sobrevive e fica no histórico do git — o mesmo padrão de auditoria
+# que o projeto exige dos dados.
+#
+# A chave é NATURAL, nunca o id da fila: `review_queue.id` e `mandate.id` são uuids
+# gerados na inserção e mudam a cada rebuild do banco. `sq_candidato` vem do TSE e
+# (house, house_member_id, id_legislatura) vem da própria Casa.
+#
+# Fluxo:
+#   uv run resumo review export -o pendencias.yml   # gera o esqueleto preenchido
+#   # decida cada caso, copie as entradas decididas para cá, explique no `note`
+#   uv run resumo review apply && uv run resumo resolve
+#
+# decision:
+#   match       vincula candidatura e mandato (a ficha passa a exibir o histórico)
+#   no_match    rejeita o par definitivamente
+#   uncertain   mantém fora do site — silêncio é melhor que um palpite publicado
+#
+# `apply` NÃO cria entradas na fila: se o pipeline nunca propôs o par, forçá-lo
+# publicaria um palpite humano como se fosse achado do pipeline.
+
+version: 1
+decisions: []
+
+# Exemplo (remova o comentário e preencha):
+#
+#  - sq_candidato: "240002537918"
+#    house: CAMARA            # CAMARA | SENADO | ASSEMBLEIA
+#    house_member_id: "204521"
+#    id_legislatura: 57
+#    decision: match
+#    by: natanael
+#    note: >-
+#      Nome civil e data de nascimento batem com a ficha do TSE; o e-Legis usa o
+#      nome parlamentar, por isso o casamento automático parou em auto_weak.

@@ -2,7 +2,7 @@
 {% block title %}{{ d.candidacy.nome }} · Resumo dos Candidatos{% endblock %}
 {% block content %}
 {% set c = d.candidacy %}
-<a href="/" class="back">← voltar</a>
+<a href="{{ base_url }}/" class="back">← voltar</a>
 
 <article class="ficha">
   <h1>{{ c.nome_urna or c.nome }}</h1>
@@ -21,7 +21,8 @@
     {% if d.proposals %}
       <ul class="proposals">
         {% for p in d.proposals %}
-          <li>📄 {{ p.filename or 'Proposta de governo' }} <em>({{ p.source }})</em></li>
+          <li>📄 <a href="{{ base_url }}{{ p.url }}">{{ p.filename or 'Proposta de governo' }}</a>
+              <em>({{ p.source }})</em></li>
         {% endfor %}
       </ul>
     {% elif c.requires_proposta %}

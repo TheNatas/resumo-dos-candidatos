@@ -44,3 +44,6 @@ section h3 { font-size:.85rem; text-transform:uppercase; letter-spacing:.04em; c
 .donors li { display:flex; justify-content:space-between; gap:1rem; padding:.45rem .6rem; border-bottom:1px solid var(--line); font-size:.9rem; }
 .donors li:last-child { border-bottom:0; }
 .donors span { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Filtro client-side do site estático esconde os cards que não casam. */
+[hidden] { display: none !important; }

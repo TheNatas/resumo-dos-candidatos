@@ -101,6 +101,10 @@ o caso normal, e o histórico que interessa ao leitor é o da Câmara. A aresta 
 **Stack:** Python 3.11+ · SQLAlchemy 2 + Alembic · Postgres (`pg_trgm`/`unaccent`) ·
 httpx · rapidfuzz (Splink opcional) · FastAPI · Typer · uv.
 
+O front tem duas saídas a partir das **mesmas** queries e dos **mesmos** templates:
+`serve` (FastAPI, uma query por visitante) e `render` (site estático, uma query por
+build). Nada de dado é reescrito para arquivo — muda só *quando* a query roda.
+
 ---
 
 ## Quickstart
@@ -150,7 +154,14 @@ uv run resumo resolve --year 2026
 
 # 6. Front público
 uv run resumo serve                 # http://127.0.0.1:8000
+
+# 7. Ou renderize o site estático (mesmos templates e queries, executados no build)
+uv run resumo render --out _site    # 658 fichas + JSON + PDFs em ~2 s
 ```
+
+O deploy é estático e gratuito (GitHub Pages + Actions) — o banco sai do caminho da
+requisição e vai para o caminho do build. Detalhes, tamanhos medidos e o que nunca é
+publicado: [DEPLOY.md](DEPLOY.md).
 
 > **Ordem importa.** `link-emendas-authors` e todos os coletores de histórico
 > dependem dos mandatos já coletados. Rodar fora de ordem não quebra nada — só
@@ -214,6 +225,18 @@ Pelo mesmo motivo, um match sustentado **apenas pelo nome** é limitado a `auto_
 uv run resumo review list
 uv run resumo review decide <review_id> match
 uv run resumo resolve
+```
+
+Uma decisão manual é a única parte do pipeline que é julgamento humano, e por isso a
+única que não pode viver só no banco: ela é versionada em
+[review-decisions.yml](review-decisions.yml), com chave natural (`sq_candidato` +
+`house`/`house_member_id`/`id_legislatura`) para sobreviver a um rebuild que
+regenera todos os uuids.
+
+```bash
+uv run resumo review export -o pendencias.yml   # esqueleto já preenchido
+uv run resumo review validate                   # roda no CI a cada push
+uv run resumo review apply && uv run resumo resolve
 ```
 
 ## Testes

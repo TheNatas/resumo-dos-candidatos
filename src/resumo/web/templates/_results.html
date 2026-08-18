@@ -1,8 +1,9 @@
 {% if results %}
 <ul class="cards">
   {% for c in results %}
-  <li class="card">
-    <a href="/candidato/{{ c.sq_candidato }}">
+  <li class="card" data-norm="{{ c.nome_normalizado or '' }}{{ ' ' }}{{ (c.nome_urna or '')|upper }}"
+      data-cargo="{{ c.cargo or '' }}" data-uf="{{ c.uf or '' }}">
+    <a href="{{ base_url }}/candidato/{{ c.sq_candidato }}">
       <strong>{{ c.nome_urna or c.nome }}</strong>
       <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
       {% if c.resultado %}<span class="badge">{{ c.resultado }}</span>{% endif %}

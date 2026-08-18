@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="search">
+  <h1>Busque um candidato</h1>
+  <p class="scope">{{ scope_label }}</p>
+  <div class="filters">
+    <input type="search" id="q" name="q" placeholder="Nome do candidato…" autofocus>
+    <select id="cargo" name="cargo" class="cargo">
+      <option value="">Todos os cargos</option>
+      {% for value, label in cargo_options %}
+        <option value="{{ value }}">{{ label }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" id="uf" name="uf" placeholder="UF" maxlength="2" class="uf">
+  </div>
+  <p class="note" id="count">{{ total }} candidaturas</p>
+</section>
+<section id="results">
+  {% include "_results.html" %}
+</section>
+<p class="empty" id="empty" hidden>Nenhuma candidatura encontrada.</p>
+
+<script>
+// Every candidacy in scope is already in the page, so filtering is a DOM predicate
+// and the list still works with JavaScript disabled. The normalization below mirrors
+// resumo.util.normalize_name, and the match is a substring — the same semantics the
+// server applies with ILIKE '%…%' over nome_normalizado.
+(function () {
+  var norm = function (s) {
+    return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  };
+  var q = document.getElementById("q");
+  var cargo = document.getElementById("cargo");
+  var uf = document.getElementById("uf");
+  var empty = document.getElementById("empty");
+  var count = document.getElementById("count");
+  var cards = Array.prototype.slice.call(document.querySelectorAll("#results .card"));
+
+  function apply() {
+    var nq = norm(q.value);
+    var nc = cargo.value;
+    var nu = uf.value.trim().toUpperCase();
+    var shown = 0;
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var ok = (!nq || card.dataset.norm.indexOf(nq) !== -1)
+            && (!nc || card.dataset.cargo.indexOf(nc) !== -1)
+            && (!nu || card.dataset.uf === nu);
+      card.hidden = !ok;
+      if (ok) shown++;
+    }
+    empty.hidden = shown > 0;
+    count.textContent = shown === 1 ? "1 candidatura" : shown + " candidaturas";
+  }
+
+  [q, cargo, uf].forEach(function (el) { el.addEventListener("input", apply); });
+  apply();
+})();
+</script>
+{% endblock %}
