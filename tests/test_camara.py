@@ -50,3 +50,43 @@ def test_deputados_collector_seeds_person_and_mandate(session):
     assert mandate.person_id == person.id
     assert mandate.sigla_uf == "SC"
     assert mandate.house_member_id == "1"
+
+
+# ── Janela de datas de /votacoes ─────────────────────────────────────────────
+# A API responde 400 "A diferença entre as datas não pode ser maior que 3 meses".
+# O limite é do endpoint, então o coletor fatia sozinho: o range do README
+# (2026-01-01 → hoje) precisa funcionar sem que o caller saiba da regra.
+import datetime as _dt  # noqa: E402
+
+from resumo.ingestion.camara.votacoes import (  # noqa: E402
+    _MAX_WINDOW_DAYS,
+    date_windows,
+)
+
+
+def _days(a: str, b: str) -> int:
+    return (_dt.date.fromisoformat(b) - _dt.date.fromisoformat(a)).days + 1
+
+
+def test_date_windows_cover_the_range_without_gaps_or_overlap():
+    windows = list(date_windows("2026-01-01", "2026-08-18"))
+
+    assert windows[0][0] == "2026-01-01"
+    assert windows[-1][1] == "2026-08-18"
+    for (_, end), (start, _) in zip(windows, windows[1:], strict=False):
+        # O próximo dia exato: sem buraco (perderia votações) e sem sobreposição.
+        assert _dt.date.fromisoformat(start) == _dt.date.fromisoformat(end) + _dt.timedelta(days=1)
+
+
+def test_no_window_exceeds_the_api_limit():
+    for start, end in date_windows("2023-01-01", "2026-12-31"):
+        assert _days(start, end) <= _MAX_WINDOW_DAYS
+    # E a folga é real: o limite observado da API fica bem acima de 80 dias.
+    assert _MAX_WINDOW_DAYS <= 88
+
+
+def test_short_and_degenerate_ranges():
+    assert list(date_windows("2026-08-18", "2026-08-18")) == [("2026-08-18", "2026-08-18")]
+    assert len(list(date_windows("2026-01-01", "2026-02-01"))) == 1
+    # Fim antes do início não gera janela nenhuma, em vez de girar para sempre.
+    assert list(date_windows("2026-08-18", "2026-01-01")) == []

@@ -133,6 +133,28 @@ um dump **sem CPF** — não o snapshot do pipeline.
       (ALESC ~96% simbólicas · Senado 57% secretas · emendas sem "valor autorizado")
 - [ ] **5. Cron diário 05:00 BRT** — a prestação parcial de 13–15/09 entra sozinha
 
+## Modos de falha (aprendidos na primeira execução)
+
+**Um coletor que falha não pode levar os outros junto.** Na primeira execução o
+`camara-votacoes` recebeu um 400 da Câmara, e como todos os coletores dividiam um
+passo sob `bash -e`, os nove seguintes nunca rodaram — enquanto o `continue-on-error`
+do passo relatava sucesso. Agora cada coletor roda isolado (`if ! …`), falha vira
+anotação visível e um resumo no job, e o passo não mente sobre o que aconteceu.
+
+**A janela de `/votacoes` da Câmara é limitada a 3 meses.** O range do README
+(01/01 → hoje) devolve `400 "A diferença entre as datas não pode ser maior que 3
+meses"`. O coletor agora fatia sozinho em janelas de 80 dias: o limite é do endpoint,
+e fazer todo caller lembrar dele é como o bug volta.
+
+**Fonte vazia não apaga dado.** Os coletores fazem upsert, então um endpoint fora do
+ar (a `/despesas` da Câmara devolveu vazio para todos os deputados em 18/08/2026) é
+no-op — o snapshot preserva o que já havia. Isso só dói no backfill frio, quando não
+existe snapshot para preservar.
+
+**Render vazio aborta a publicação.** Se `api/candidates.json` sai com zero
+candidaturas, o build falha e o site anterior continua no ar. Melhor manter dado de
+ontem que publicar página em branco.
+
 ## Limite conhecido
 
 Ampliando para nacional (`RESUMO_TARGET_UFS=""`), são ~29 mil candidatos: ~130 MB de

@@ -129,46 +129,59 @@ jobs:
         run: uv run resumo db-upgrade
       - run: uv run resumo scope
 
-      # Best-effort: uma fonte fora do ar significa "sem dado novo hoje", não site
-      # fora do ar — o snapshot já traz o que foi coletado antes. As falhas seguem
-      # visíveis como anotações na execução.
-      - name: Coleta — TSE
-        continue-on-error: true
-        run: |
-          uv run resumo collect tse-candidates
-          uv run resumo collect tse-assets
-          uv run resumo collect tse-proposta
-          uv run resumo collect tse-contas
-
-      - name: Coleta — mandatos (sempre antes do histórico)
-        continue-on-error: true
-        run: |
-          uv run resumo collect camara-deputados
-          uv run resumo collect senado-senadores
-          uv run resumo collect alesc-deputados
-
-      - name: Coleta — histórico de atuação
-        continue-on-error: true
+      # Cada coletor é isolado do `bash -e` por um `if !`. Sem isso, o primeiro que
+      # falha aborta todos os seguintes no mesmo passo — foi o que aconteceu na
+      # primeira execução (um 400 da Câmara levou junto nove coletores) e o
+      # `continue-on-error` do passo relatou sucesso. Falha de fonte vira anotação
+      # visível, não silêncio: o snapshot já guarda o que foi coletado antes, então
+      # uma fonte fora do ar significa "sem dado novo hoje", não site fora do ar.
+      - name: Coleta
         run: |
           HOJE="$(date -u +%F)"
           ANOS="2023,2024,2025,2026"
-          uv run resumo collect camara-despesas    --anos "$ANOS"
-          uv run resumo collect camara-proposicoes
-          uv run resumo collect camara-votacoes    --inicio 2026-01-01 --fim "$HOJE"
-          uv run resumo collect camara-eventos     --inicio 2026-01-01 --fim "$HOJE"
-          uv run resumo collect senado-despesas    --anos "$ANOS"
-          uv run resumo collect senado-proposicoes
-          uv run resumo collect senado-votacoes    --inicio 2026-01-01 --fim "$HOJE"
-          uv run resumo collect alesc-despesas     --anos 2025,2026
-          uv run resumo collect alesc-votacoes     --inicio 2026-01-01 --fim "$HOJE"
-          uv run resumo collect alesc-presenca     --inicio 2026-01-01 --fim "$HOJE"
-          uv run resumo collect alesc-proposicoes  --anos 2026
+          falhas=()
+          coletar() {
+            echo "::group::$*"
+            if ! "$@"; then
+              falhas+=("$*")
+              echo "::warning::coletor falhou: $*"
+            fi
+            echo "::endgroup::"
+          }
 
-      - name: Coleta — emendas
-        continue-on-error: true
-        run: |
-          uv run resumo collect emendas
-          uv run resumo link-emendas-authors
+          coletar uv run resumo collect tse-candidates
+          coletar uv run resumo collect tse-assets
+          coletar uv run resumo collect tse-proposta
+          coletar uv run resumo collect tse-contas
+
+          # Mandatos sempre antes do histórico: os demais coletores só guardam linhas
+          # de quem já tem mandato em base.
+          coletar uv run resumo collect camara-deputados
+          coletar uv run resumo collect senado-senadores
+          coletar uv run resumo collect alesc-deputados
+
+          coletar uv run resumo collect camara-despesas    --anos "$ANOS"
+          coletar uv run resumo collect camara-proposicoes
+          coletar uv run resumo collect camara-votacoes    --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect camara-eventos     --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect senado-despesas    --anos "$ANOS"
+          coletar uv run resumo collect senado-proposicoes
+          coletar uv run resumo collect senado-votacoes    --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect alesc-despesas     --anos 2025,2026
+          coletar uv run resumo collect alesc-votacoes     --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect alesc-presenca     --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect alesc-proposicoes  --anos 2026
+
+          coletar uv run resumo collect emendas
+          coletar uv run resumo link-emendas-authors
+
+          if [ ${#falhas[@]} -gt 0 ]; then
+            echo "::warning::${#falhas[@]} coletor(es) falharam nesta execução"
+            { echo "### Coletores com falha (${#falhas[@]})"; printf '\n- `%s`' "${falhas[@]}"; } \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Todos os coletores rodaram sem erro" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # A fila é SAÍDA do resolve e as decisões são ENTRADA dele: num banco recém
       # construído a fila só existe depois da primeira passada. Então resolve roda,
@@ -186,6 +199,14 @@ jobs:
             --base-url "${{ steps.pages.outputs.base_path }}" \
             --site-url "${{ steps.pages.outputs.base_url }}"
           du -sh --apparent-size _site
+          # Se a renderização saiu vazia, algo está errado a montante: melhor falhar
+          # e manter no ar o site anterior do que publicar uma página em branco.
+          python3 - <<'PY'
+          import json, sys
+          n = len(json.load(open("_site/api/candidates.json")))
+          print(f"{n} candidaturas renderizadas")
+          sys.exit(0 if n else "render vazio — publicação abortada")
+          PY
 
       - name: Salva o snapshot
         run: |

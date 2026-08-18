@@ -7,6 +7,8 @@ empty /votos and are skipped.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from sqlalchemy.orm import Session
 
 from resumo.config import get_settings
@@ -17,6 +19,24 @@ from resumo.ingestion.camara.common import mandate_map
 from resumo.ingestion.http import throttle
 from resumo.ingestion.ledger import record_ingestion, upsert
 from resumo.util import clean, parse_date
+
+# A API recusa a janela inteira com 400 "A diferença entre as datas não pode ser
+# maior que 3 meses". O limite é do endpoint, não de quem chama: fatiar aqui evita
+# que todo caller (README, cron, CI) tenha que lembrar dele. 80 dias fica
+# confortavelmente dentro de qualquer leitura de "3 meses".
+_MAX_WINDOW_DAYS = 80
+
+
+def date_windows(data_inicio: str, data_fim: str, *, max_days: int = _MAX_WINDOW_DAYS):
+    """Fatia [início, fim] em janelas inclusivas de no máximo `max_days` dias."""
+    start = dt.date.fromisoformat(data_inicio)
+    end = dt.date.fromisoformat(data_fim)
+    if start > end:
+        return
+    while start <= end:
+        stop = min(start + dt.timedelta(days=max_days - 1), end)
+        yield start.isoformat(), stop.isoformat()
+        start = stop + dt.timedelta(days=1)
 
 
 class VotacoesCollector(Collector):
@@ -42,17 +62,19 @@ class VotacoesCollector(Collector):
         client = client or CamaraClient()
         try:
             mandates = mandate_map(session, leg)
-            votacoes = list(
-                client.paginate(
-                    "votacoes",
-                    {
-                        "dataInicio": data_inicio,
-                        "dataFim": data_fim,
-                        "ordem": "DESC",
-                        "ordenarPor": "dataHoraRegistro",
-                    },
+            votacoes = []
+            for win_inicio, win_fim in date_windows(data_inicio, data_fim):
+                votacoes.extend(
+                    client.paginate(
+                        "votacoes",
+                        {
+                            "dataInicio": win_inicio,
+                            "dataFim": win_fim,
+                            "ordem": "DESC",
+                            "ordenarPor": "dataHoraRegistro",
+                        },
+                    )
                 )
-            )
             if limit:
                 votacoes = votacoes[:limit]
 
