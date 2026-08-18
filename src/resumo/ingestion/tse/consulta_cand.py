@@ -12,18 +12,22 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from resumo import cargos
 from resumo.config import get_settings
 from resumo.db.models import Candidacy, Coalition
 from resumo.ingestion.base import Collector, CollectorResult
 from resumo.ingestion.http import download_to_tempfile
-from resumo.ingestion.ledger import already_ingested, content_hash, record_ingestion, upsert
+from resumo.ingestion.ledger import (
+    already_ingested,
+    content_hash,
+    record_ingestion,
+    scoped_key,
+    upsert,
+)
 from resumo.ingestion.tse import ckan, parsing
 from resumo.util import clean, normalize_name, parse_date, parse_int
 
 logger = logging.getLogger("resumo.ingestion.tse")
-
-# Cargos obligated to file a "proposta de governo" (executive majoritarian).
-MAJORITARIAN_CARGOS = {1, 3, 11}  # Presidente, Governador, Prefeito
 
 
 def _candidacy_row(r: dict[str, str]) -> dict | None:
@@ -57,7 +61,7 @@ def _candidacy_row(r: dict[str, str]) -> dict | None:
         "ds_detalhe_situacao_cand": clean(r.get("DS_DETALHE_SITUACAO_CAND")),
         "ds_sit_tot_turno": clean(r.get("DS_SIT_TOT_TURNO")),
         "st_reeleicao": clean(r.get("ST_REELEICAO")),
-        "is_majoritario": cd_cargo in MAJORITARIAN_CARGOS,
+        "is_majoritario": cargos.is_majoritario(cd_cargo),
     }
 
 
@@ -84,9 +88,16 @@ class ConsultaCandCollector(Collector):
         *,
         source: Path | str | None = None,
         year: int | None = None,
+        ufs: list[str] | None = None,
+        cargo_codes: list[int] | None = None,
         **_,
     ) -> CollectorResult:
-        year = year or get_settings().election_year
+        settings = get_settings()
+        year = year or settings.election_year
+        # Scope defaults come from config (SC + the 4 general-election offices); the
+        # kwargs exist so a caller can widen or narrow a single run without env edits.
+        uf_scope = tuple(u.upper() for u in ufs) if ufs is not None else settings.uf_list
+        cargo_scope = frozenset(cargo_codes) if cargo_codes is not None else settings.cargo_set
 
         # Resolve the artifact (local file for tests/backfill, else download).
         tmp: Path | None = None
@@ -103,19 +114,32 @@ class ConsultaCandCollector(Collector):
             tmp, digest = download_to_tempfile(source_url)
             data_path = tmp
 
+        ledger_url = scoped_key(
+            source_url,
+            uf=",".join(uf_scope),
+            cargo=",".join(map(str, sorted(cargo_scope))),
+        )
+
         try:
-            if already_ingested(session, source_url, digest):
+            if already_ingested(session, ledger_url, digest):
                 return CollectorResult(self.name, "skipped", 0, "unchanged (hash match)")
 
             candidacies: dict[str, dict] = {}
             coalitions: dict[str, dict] = {}
             generated_at: str | None = None
-            for r in parsing.iter_records(data_path):
+            skipped_cargo = 0
+            for r in parsing.iter_records(data_path, ufs=uf_scope):
                 if generated_at is None:
                     generated_at = clean(r.get("DT_GERACAO"))
                 cand = _candidacy_row(r)
-                if cand:
-                    candidacies[cand["sq_candidato"]] = cand
+                if cand is None:
+                    continue
+                if cargo_scope and cand["cd_cargo"] not in cargo_scope:
+                    skipped_cargo += 1
+                    continue
+                candidacies[cand["sq_candidato"]] = cand
+                # Coalitions are only kept for candidacies we actually ingest, so the
+                # table never accumulates FK targets for out-of-scope offices.
                 col = _coalition_row(r)
                 if col:
                     coalitions[col["sq_coligacao"]] = col
@@ -126,12 +150,16 @@ class ConsultaCandCollector(Collector):
             record_ingestion(
                 session,
                 collector_name=self.name,
-                source_url=source_url,
+                source_url=ledger_url,
                 digest=digest,
                 row_count=n,
                 source_generated_at=generated_at,
             )
-            return CollectorResult(self.name, "ingested", n, f"{len(coalitions)} coalitions")
+            scope = f"uf={','.join(uf_scope) or 'ALL'} cargo={','.join(map(str, sorted(cargo_scope))) or 'ALL'}"
+            detail = f"{len(coalitions)} coalitions · {scope}"
+            if skipped_cargo:
+                detail += f" · {skipped_cargo} rows out of cargo scope"
+            return CollectorResult(self.name, "ingested", n, detail)
         finally:
             if tmp is not None:
                 tmp.unlink(missing_ok=True)

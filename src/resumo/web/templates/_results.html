@@ -6,12 +6,17 @@
       <strong>{{ c.nome_urna or c.nome }}</strong>
       <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
       {% if c.resultado %}<span class="badge">{{ c.resultado }}</span>{% endif %}
+      {% if c.history_status == 'no_public_source' %}
+        <span class="badge badge-muted" title="{{ c.history_note }}">sem fonte de histórico</span>
+      {% elif c.history_status == 'partial' %}
+        <span class="badge badge-muted" title="{{ c.history_note }}">histórico parcial</span>
+      {% endif %}
     </a>
   </li>
   {% endfor %}
 </ul>
-{% elif q or uf %}
+{% elif q or uf or cargo %}
 <p class="empty">Nenhuma candidatura encontrada.</p>
 {% else %}
-<p class="empty">Digite um nome para começar.</p>
+<p class="empty">Digite um nome ou escolha um cargo para começar.</p>
 {% endif %}

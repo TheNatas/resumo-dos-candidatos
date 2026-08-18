@@ -1,7 +1,17 @@
 """Lightweight records + loaders for the resolution pipeline.
 
-Person side comes from Câmara-seeded persons that hold a mandate (the only ones a
-candidacy can be an "incumbent re-election" of). Candidate side comes from TSE.
+Person side comes from every house we collect mandates for — Câmara, Senado and the
+state assembly. A candidacy is matched against ALL of them, deliberately: a deputado
+federal running for senador is the common case, and their Câmara record is exactly
+the history a reader wants. The link therefore means "this candidate currently holds
+a mandate", not "is running for the same seat".
+
+Identity strength varies sharply by house, and the pipeline has to know:
+  * Câmara  — CPF published -> deterministic match.
+  * Senado  — NO CPF anywhere in its API; nome civil + data de nascimento only.
+  * ALESC   — NO CPF and NO birth date; name only.
+`PersonRec.has_corroborator` carries that fact forward so a name-only match cannot
+be promoted to the strongest tier. See resolution/probabilistic.py.
 """
 
 from __future__ import annotations
@@ -23,10 +33,17 @@ class PersonRec:
     mandate_id: uuid.UUID
     member_id: str
     cpf: str | None
+    titulo: str | None
     nome_norm: str | None
     dob: dt.date | None
     uf: str | None
+    house: House
     mandate_active: bool
+
+    @property
+    def has_corroborator(self) -> bool:
+        """Whether anything beyond the name can confirm this identity."""
+        return bool(self.cpf or self.titulo or self.dob)
 
 
 @dataclass
@@ -41,16 +58,18 @@ class CandRec:
     extra: dict = field(default_factory=dict)
 
 
-def load_person_recs(session: Session) -> list[PersonRec]:
-    """One PersonRec per (person, chosen mandate). Picks the active/most-recent
-    Câmara mandate when a person has several."""
-    rows = session.execute(
-        select(Mandate, Person)
-        .join(Person, Mandate.person_id == Person.id)
-        .where(Mandate.house == House.CAMARA)
-    ).all()
+def load_person_recs(session: Session, *, houses: list[House] | None = None) -> list[PersonRec]:
+    """One PersonRec per (person, chosen mandate), across every collected house.
+
+    When a person holds several mandates, an active one wins; ties break on the
+    later `data_inicio` so the most recent seat represents them."""
+    stmt = select(Mandate, Person).join(Person, Mandate.person_id == Person.id)
+    if houses:
+        stmt = stmt.where(Mandate.house.in_(houses))
+    rows = session.execute(stmt).all()
 
     best: dict[uuid.UUID, PersonRec] = {}
+    starts: dict[uuid.UUID, dt.date | None] = {}
     for mandate, person in rows:
         active = mandate.data_fim is None
         rec = PersonRec(
@@ -58,14 +77,21 @@ def load_person_recs(session: Session) -> list[PersonRec]:
             mandate_id=mandate.id,
             member_id=mandate.house_member_id,
             cpf=person.cpf,
+            titulo=person.titulo_eleitoral,
             nome_norm=person.nome_normalizado,
             dob=person.data_nascimento,
             uf=mandate.sigla_uf,
+            house=mandate.house,
             mandate_active=active,
         )
         prev = best.get(person.id)
-        if prev is None or (active and not prev.mandate_active):
-            best[person.id] = rec
+        if prev is None:
+            best[person.id], starts[person.id] = rec, mandate.data_inicio
+            continue
+        prev_start = starts.get(person.id)
+        newer = (mandate.data_inicio or dt.date.min) > (prev_start or dt.date.min)
+        if (active and not prev.mandate_active) or (active == prev.mandate_active and newer):
+            best[person.id], starts[person.id] = rec, mandate.data_inicio
     return list(best.values())
 
 

@@ -29,3 +29,18 @@ def test_parse_decimal_brazilian():
     assert parse_decimal("1.234,56") == 1234.56
     assert parse_decimal("1500.00") == 1500.0
     assert parse_decimal("") is None
+
+
+def test_tse_numeric_sentinels_are_not_values():
+    """`-1`/`-3`/`-4` are TSE "not informed" codes. Parsed as numbers they become
+    real negative amounts — a -4.00 expense that never happened."""
+    from resumo.util import clean, parse_decimal, parse_int
+
+    for sentinel in ("-1", "-3", "-4"):
+        assert clean(sentinel) is None, sentinel
+        assert parse_decimal(sentinel) is None, sentinel
+        assert parse_int(sentinel) is None, sentinel
+
+    # A genuine negative value must still parse — ALESC publishes refunds as negatives.
+    assert parse_decimal("-539,00") == -539.0
+    assert parse_decimal("-2") == -2.0

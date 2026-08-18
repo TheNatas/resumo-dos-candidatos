@@ -24,10 +24,9 @@ def match(cand: CandRec, index: PersonIndex) -> DeterministicHit | None:
     # R1 — CPF exact.
     if cand.cpf and cand.cpf in index.by_cpf:
         return DeterministicHit(index.by_cpf[cand.cpf], MatchMethod.cpf_exact)
-    # R2/R3 — título exact (only useful once persons carry título; reserved hook).
-    if cand.titulo:
-        for p in index.candidates_in_uf(cand.uf):
-            p_titulo = getattr(p, "titulo", None)
-            if p_titulo and p_titulo == cand.titulo:
-                return DeterministicHit(p, MatchMethod.titulo_exact)
+    # R2/R3 — título exact. The cross-election anchor when CPF is masked or absent
+    # (the Senado publishes no CPF at all, so this is the only deterministic route
+    # left for a senator — it fires whenever a título has been recorded for them).
+    if cand.titulo and cand.titulo in index.by_titulo:
+        return DeterministicHit(index.by_titulo[cand.titulo], MatchMethod.titulo_exact)
     return None

@@ -45,15 +45,43 @@ class PropostaGovernoCollector(Collector):
         uf: str | None = None,
         **_,
     ) -> CollectorResult:
-        year = year or get_settings().election_year
+        """Ingest one UF's proposta zip, or every configured UF when `uf` is omitted."""
+        settings = get_settings()
+        year = year or settings.election_year
+
+        if source is None and not uf:
+            # No explicit UF: fan out over the configured scope. Keeps the CLI usable
+            # as a bare `collect tse-proposta` in a single-state install.
+            targets = settings.uf_list
+            if not targets:
+                raise ValueError(
+                    "proposta_governo is published per UF: pass --uf, or set RESUMO_TARGET_UFS"
+                )
+            if len(targets) > 1:
+                total, details = 0, []
+                for one in targets:
+                    r = self.run(session, year=year, uf=one)
+                    total += r.row_count
+                    details.append(f"{one}:{r.status}({r.row_count})")
+                return CollectorResult(self.name, "ingested", total, " ".join(details))
+            uf = targets[0]
+
+        return self._run_one(session, source=source, year=year, uf=uf)
+
+    def _run_one(
+        self,
+        session: Session,
+        *,
+        source: Path | str | None,
+        year: int,
+        uf: str | None,
+    ) -> CollectorResult:
         tmp: Path | None = None
         if source is not None:
             data_path: Path | str = source
             digest = content_hash(Path(source).read_bytes())
             source_url = str(source)
         else:
-            if not uf:
-                raise ValueError("proposta_governo needs a `uf` (per-UF zip) when downloading")
             source_url = ckan.cdn_url("proposta_governo", year, uf)
             tmp, digest = download_to_tempfile(source_url)
             data_path = tmp
@@ -96,7 +124,11 @@ class PropostaGovernoCollector(Collector):
             record_ingestion(
                 session, collector_name=self.name, source_url=source_url, digest=digest, row_count=n
             )
-            detail = f"{orphans} unmapped PDFs" if orphans else None
+            # Orphans are expected here: a per-UF zip carries every majoritarian
+            # candidate's PDF, while `known` is narrowed to the configured cargo scope.
+            detail = f"uf={uf or '—'}"
+            if orphans:
+                detail += f" · {orphans} PDFs sem candidatura no escopo"
             return CollectorResult(self.name, "ingested", n, detail)
         finally:
             if tmp is not None:

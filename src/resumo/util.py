@@ -11,7 +11,12 @@ _WS = re.compile(r"\s+")
 _NON_NAME = re.compile(r"[^A-Z0-9 ]")
 
 # TSE sentinels meaning "not informed" — must never be treated as real values.
-_NULLISH = {"", "#NULO#", "#NULO", "#NE#", "NÃO DIVULGÁVEL", "NAO DIVULGAVEL", "-1", "-3"}
+# The numeric ones are codes, not quantities: `-4` appears in the prestação de contas
+# products and would otherwise parse as a real -4.00 currency amount.
+_NULLISH = {
+    "", "#NULO#", "#NULO", "#NE#", "#NE", "NÃO DIVULGÁVEL", "NAO DIVULGAVEL",
+    "-1", "-3", "-4",
+}
 
 
 def clean(value) -> str | None:

@@ -37,8 +37,24 @@ from resumo.db.session import Base
 
 # ── Enums ────────────────────────────────────────────────────────────────────
 class House(str, enum.Enum):
+    """A legislative body a mandate can be held in.
+
+    ASSEMBLEIA is the generic state-assembly slot (ALESC for SC); the concrete state
+    is carried by `Mandate.sigla_uf`, so the enum stays national.
+    """
+
     CAMARA = "CAMARA"
-    SENADO = "SENADO"  # reserved for S5; the model already supports it.
+    SENADO = "SENADO"
+    ASSEMBLEIA = "ASSEMBLEIA"
+
+    @property
+    def label(self) -> str:
+        """Human-readable name for the public UI."""
+        return {
+            House.CAMARA: "Câmara dos Deputados",
+            House.SENADO: "Senado Federal",
+            House.ASSEMBLEIA: "Assembleia Legislativa",
+        }[self]
 
 
 class MatchMethod(str, enum.Enum):
@@ -230,6 +246,7 @@ class Mandate(Base):
     propositions: Mapped[list[Proposition]] = relationship(back_populates="mandate")
     attendance: Mapped[list[AttendanceRecord]] = relationship(back_populates="mandate")
     expenses: Mapped[list[Expense]] = relationship(back_populates="mandate")
+    amendments: Mapped[list[BudgetAmendment]] = relationship(back_populates="mandate")
     links: Mapped[list[CandidateMandateLink]] = relationship(back_populates="mandate")
 
 
@@ -321,6 +338,285 @@ class Expense(Base):
     url_documento: Mapped[str | None] = mapped_column(String(512))
 
     mandate: Mapped[Mandate | None] = relationship(back_populates="expenses")
+
+
+# ── Prestação de contas eleitorais (campaign finance) ────────────────────────
+# Source of truth: TSE bulk `prestacao_contas/prestacao_de_contas_eleitorais_
+# candidatos_<ANO>.zip` (NB: the CDN directory is `prestacao_contas`, while the
+# FILE is `prestacao_de_contas_...`). One national zip; the UF split is inside it.
+#
+# Two joins matter and only one of them is universal:
+#   * `sq_candidato` exists in receitas and despesas_contratadas ONLY.
+#   * `sq_prestador_contas` (the accounting entity) exists in all four families and
+#     is how the other two resolve back to a candidacy.
+# Both are kept on every row so the resolution is inspectable rather than implied.
+
+
+class AccountFiling(str, enum.Enum):
+    """TP_PRESTACAO_CONTAS. The FINAL file retains earlier parcial/relatório rows, so
+    aggregations MUST filter on this or the same money is counted twice."""
+
+    final = "final"
+    parcial = "parcial"
+    relatorio_financeiro = "relatorio_financeiro"
+    regularizacao_omissao = "regularizacao_omissao"
+    outro = "outro"
+
+
+class CampaignRevenue(Base):
+    """A campaign receipt (doação/recurso). Source: receitas_candidatos_<ANO>_<UF>.csv.
+
+    `SQ_RECEITA` looks like a key but is NOT unique: in 2022/SC, 72 sequences cover
+    241 extra rows, and the copies are genuinely different money — same candidate,
+    same turno, same filing type, but different `VR_RECEITA` and `DS_RECEITA`
+    (e.g. R$ 142,50 and R$ 750,00 both filed as sequence 28316985). Keying on it
+    silently discarded ~0.2% of declared revenue, so identity is a row hash, exactly
+    as for the two despesa families.
+    """
+
+    __tablename__ = "campaign_revenue"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    row_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    sq_receita: Mapped[str | None] = mapped_column(String(32), index=True)
+
+    sq_candidato: Mapped[str | None] = mapped_column(
+        ForeignKey("candidacy.sq_candidato"), index=True
+    )
+    sq_prestador_contas: Mapped[str | None] = mapped_column(String(32), index=True)
+    ano_eleicao: Mapped[int] = mapped_column(Integer, index=True)
+    st_turno: Mapped[int | None] = mapped_column(Integer)  # source column is ST_TURNO, not NR_TURNO
+    tp_prestacao_contas: Mapped[AccountFiling] = mapped_column(
+        Enum(AccountFiling), default=AccountFiling.outro, index=True
+    )
+    dt_prestacao_contas: Mapped[dt.date | None] = mapped_column(Date)
+
+    dt_receita: Mapped[dt.date | None] = mapped_column(Date)
+    vr_receita: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    ds_receita: Mapped[str | None] = mapped_column(Text)
+    ds_fonte_receita: Mapped[str | None] = mapped_column(String(120))
+    ds_origem_receita: Mapped[str | None] = mapped_column(String(160))
+    ds_natureza_receita: Mapped[str | None] = mapped_column(String(160))
+    ds_especie_receita: Mapped[str | None] = mapped_column(String(120))
+
+    # Donor. `nm_doador_rfb` is Receita Federal's canonical name — prefer it over the
+    # self-declared `nm_doador` when resolving entities.
+    nr_cpf_cnpj_doador: Mapped[str | None] = mapped_column(String(20), index=True)
+    nm_doador: Mapped[str | None] = mapped_column(String(255))
+    nm_doador_rfb: Mapped[str | None] = mapped_column(String(255))
+    ds_cnae_doador: Mapped[str | None] = mapped_column(String(255))
+    sg_uf_doador: Mapped[str | None] = mapped_column(String(2))
+    nm_municipio_doador: Mapped[str | None] = mapped_column(String(120))
+    # Set when the donor is itself a candidacy (candidate-to-candidate transfer).
+    sq_candidato_doador: Mapped[str | None] = mapped_column(String(32), index=True)
+    sg_partido_doador: Mapped[str | None] = mapped_column(String(32))
+
+    candidacy: Mapped[Candidacy | None] = relationship()
+
+
+class CampaignRevenueOriginator(Base):
+    """Pass-through disclosure: who ORIGINALLY funded a receipt that reached the
+    candidate via a party/other transfer. Source: receitas_candidatos_doador_
+    originario_<ANO>_<UF>.csv, joined on SQ_RECEITA.
+
+    Kept as its own table rather than denormalized onto the receipt because a single
+    receipt can legitimately disclose more than one original donor.
+
+    `sq_receita` is a plain indexed column, NOT a foreign key: the sequence is not
+    unique on the revenue side either (see CampaignRevenue), so this is a join key,
+    not a reference to one row."""
+
+    __tablename__ = "campaign_revenue_originator"
+    __table_args__ = (UniqueConstraint("sq_receita", "nr_cpf_cnpj_doador_originario"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    sq_receita: Mapped[str] = mapped_column(String(32), index=True)
+    nr_cpf_cnpj_doador_originario: Mapped[str] = mapped_column(String(20), default="")
+    nm_doador_originario: Mapped[str | None] = mapped_column(String(255))
+    nm_doador_originario_rfb: Mapped[str | None] = mapped_column(String(255))
+    tp_doador_originario: Mapped[str | None] = mapped_column(String(64))
+    ds_cnae_doador_originario: Mapped[str | None] = mapped_column(String(255))
+    vr_receita: Mapped[float | None] = mapped_column(Numeric(18, 2))
+
+
+class CampaignExpense(Base):
+    """A contracted campaign expense. Source: despesas_contratadas_candidatos_*.csv.
+
+    `sq_despesa` is NOT unique — one contract yields many line items (installments,
+    multi-line invoices), repeating up to ~90x. Identity is therefore a row hash."""
+
+    __tablename__ = "campaign_expense"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    row_hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+    sq_despesa: Mapped[str | None] = mapped_column(String(32), index=True)
+    sq_candidato: Mapped[str | None] = mapped_column(
+        ForeignKey("candidacy.sq_candidato"), index=True
+    )
+    sq_prestador_contas: Mapped[str | None] = mapped_column(String(32), index=True)
+    ano_eleicao: Mapped[int] = mapped_column(Integer, index=True)
+    st_turno: Mapped[int | None] = mapped_column(Integer)
+    tp_prestacao_contas: Mapped[AccountFiling] = mapped_column(
+        Enum(AccountFiling), default=AccountFiling.outro, index=True
+    )
+
+    dt_despesa: Mapped[dt.date | None] = mapped_column(Date)
+    vr_despesa_contratada: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    ds_despesa: Mapped[str | None] = mapped_column(Text)
+    ds_origem_despesa: Mapped[str | None] = mapped_column(String(255))
+    ds_tipo_documento: Mapped[str | None] = mapped_column(String(120))
+    nr_documento: Mapped[str | None] = mapped_column(String(64))
+
+    nr_cpf_cnpj_fornecedor: Mapped[str | None] = mapped_column(String(20), index=True)
+    nm_fornecedor: Mapped[str | None] = mapped_column(String(255))
+    nm_fornecedor_rfb: Mapped[str | None] = mapped_column(String(255))
+    ds_cnae_fornecedor: Mapped[str | None] = mapped_column(String(255))
+    sg_uf_fornecedor: Mapped[str | None] = mapped_column(String(2))
+    nm_municipio_fornecedor: Mapped[str | None] = mapped_column(String(120))
+
+    candidacy: Mapped[Candidacy | None] = relationship()
+
+
+class CampaignPayment(Base):
+    """An actual payment against a contracted expense. Source:
+    despesas_pagas_candidatos_*.csv.
+
+    This family carries NO candidate and NO supplier columns — it resolves to a
+    candidacy through `sq_prestador_contas`, and to a counterparty through
+    `sq_despesa` -> CampaignExpense. Aggregate each side to `sq_despesa` before
+    joining: the relation is many-to-many and a naive join fans the totals out."""
+
+    __tablename__ = "campaign_payment"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    row_hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+    sq_despesa: Mapped[str | None] = mapped_column(String(32), index=True)
+    sq_parcelamento_despesa: Mapped[str | None] = mapped_column(String(32))
+    sq_prestador_contas: Mapped[str | None] = mapped_column(String(32), index=True)
+    # Backfilled from the prestador -> candidacy map built off receitas/contratadas.
+    sq_candidato: Mapped[str | None] = mapped_column(
+        ForeignKey("candidacy.sq_candidato"), index=True
+    )
+    ano_eleicao: Mapped[int] = mapped_column(Integer, index=True)
+    st_turno: Mapped[int | None] = mapped_column(Integer)
+    tp_prestacao_contas: Mapped[AccountFiling] = mapped_column(
+        Enum(AccountFiling), default=AccountFiling.outro, index=True
+    )
+
+    dt_pagto_despesa: Mapped[dt.date | None] = mapped_column(Date)
+    vr_pagto_despesa: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    ds_despesa: Mapped[str | None] = mapped_column(Text)
+    ds_natureza_despesa: Mapped[str | None] = mapped_column(String(120))
+    ds_especie_recurso: Mapped[str | None] = mapped_column(String(120))
+    ds_fonte_despesa: Mapped[str | None] = mapped_column(String(120))
+    ds_origem_despesa: Mapped[str | None] = mapped_column(String(255))
+
+    candidacy: Mapped[Candidacy | None] = relationship()
+
+
+# ── Emendas parlamentares (budget amendments) ────────────────────────────────
+class AmendmentType(str, enum.Enum):
+    """RP modality. Only the two *individual* types name a single legislator; the
+    others belong to a bancada, a committee or the relator-geral, and attributing
+    them to one person would be wrong."""
+
+    individual_finalidade_definida = "individual_finalidade_definida"  # RP6
+    individual_transferencia_especial = "individual_transferencia_especial"  # RP6 "PIX"
+    bancada = "bancada"  # RP7 — the state's whole delegation
+    comissao = "comissao"  # RP9 — a committee
+    relator = "relator"  # RP8 — relator-geral ("orçamento secreto"), ended 2022
+    outro = "outro"
+
+    @property
+    def is_individual(self) -> bool:
+        return self in (
+            AmendmentType.individual_finalidade_definida,
+            AmendmentType.individual_transferencia_especial,
+        )
+
+
+class BudgetAmendment(Base):
+    """One emenda parlamentar row. Source of truth: CGU bulk
+    `EmendasParlamentares.zip` (Portal da Transparência download, no auth).
+
+    Grain matches the source: one row per emenda x localidade x ação, so a single
+    `codigo_emenda` legitimately appears many times. Identity is a hash over the
+    salient fields (the source has no row-level key)."""
+
+    __tablename__ = "budget_amendment"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    row_hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+    codigo_emenda: Mapped[str] = mapped_column(String(32), index=True)
+    ano: Mapped[int] = mapped_column(Integer, index=True)
+    tipo_emenda_raw: Mapped[str | None] = mapped_column(String(120))
+    tipo: Mapped[AmendmentType] = mapped_column(Enum(AmendmentType), index=True)
+
+    # SIOP author code. Stable within a mandate, NOT across a career: the same person
+    # gets a new code when they change house, and a departed member's code is
+    # reassigned to their successor. Hence the (code, ano) grain on the author link.
+    siop_author_code: Mapped[str | None] = mapped_column(String(16), index=True)
+    author_name_raw: Mapped[str | None] = mapped_column(String(255))
+    author_name_normalizado: Mapped[str | None] = mapped_column(String(255), index=True)
+
+    # Resolved via AmendmentAuthorLink; null until the bridge is built/reviewed.
+    person_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("person.id"), index=True)
+    mandate_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("mandate.id"), index=True)
+
+    codigo_municipio_ibge: Mapped[str | None] = mapped_column(String(16))
+    municipio: Mapped[str | None] = mapped_column(String(120))
+    codigo_uf_ibge: Mapped[str | None] = mapped_column(String(16))
+    uf: Mapped[str | None] = mapped_column(String(64), index=True)  # full state NAME in the source
+    regiao: Mapped[str | None] = mapped_column(String(32))
+
+    nome_funcao: Mapped[str | None] = mapped_column(String(120))
+    nome_subfuncao: Mapped[str | None] = mapped_column(String(120))
+    nome_programa: Mapped[str | None] = mapped_column(String(255))
+    nome_acao: Mapped[str | None] = mapped_column(String(255))
+
+    # NB: the source publishes NO "valor autorizado"/dotação. `valor_empenhado` is the
+    # best available proxy and must be labeled as such in any UI.
+    valor_empenhado: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    valor_liquidado: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    valor_pago: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    valor_resto_inscrito: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    valor_resto_cancelado: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    valor_resto_pago: Mapped[float | None] = mapped_column(Numeric(18, 2))
+
+    person: Mapped[Person | None] = relationship()
+    mandate: Mapped[Mandate | None] = relationship(back_populates="amendments")
+
+
+class AmendmentAuthorLink(Base):
+    """Materialized bridge: SIOP author code (per year) -> the mandate that authored.
+
+    The emendas source carries no CPF and no Câmara/Senado id, so this edge is built
+    ONCE by UF-scoped exact match on the normalized nome parlamentar and then pinned
+    as reviewed data — never re-fuzzed at request time. Same auditability contract as
+    :class:`CandidateMandateLink`: method, confidence and provenance are recorded, and
+    a human decision is authoritative."""
+
+    __tablename__ = "amendment_author_link"
+    __table_args__ = (UniqueConstraint("siop_author_code", "ano"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    siop_author_code: Mapped[str] = mapped_column(String(16), index=True)
+    ano: Mapped[int] = mapped_column(Integer, index=True)
+
+    mandate_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("mandate.id"), index=True)
+    person_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("person.id"), index=True)
+
+    author_name_raw: Mapped[str | None] = mapped_column(String(255))
+    match_method: Mapped[MatchMethod] = mapped_column(Enum(MatchMethod))
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0)
+    confidence_tier: Mapped[ConfidenceTier] = mapped_column(Enum(ConfidenceTier))
+    resolver: Mapped[str | None] = mapped_column(String(64))
+    resolved_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 # ── THE CENTRAL EDGE ─────────────────────────────────────────────────────────

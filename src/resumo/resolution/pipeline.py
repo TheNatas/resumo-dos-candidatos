@@ -7,6 +7,12 @@ Order of precedence per candidacy:
 
 Only auto_strong/auto_weak/manual produce a public link. `review` rows wait in the
 queue and are NOT shown publicly.
+
+Candidacies are matched against mandates in EVERY collected house, not just the one
+matching the office they seek — a deputado federal running for senador is the normal
+case. Houses differ in what identity they publish (Câmara has CPF, the Senado has
+none, ALESC has neither CPF nor birth date), so a match backed only by a name is
+held to auto_weak; see resolution/probabilistic.py.
 """
 
 from __future__ import annotations
@@ -124,6 +130,8 @@ def resolve(session: Session, *, year: int | None = None) -> ResolutionResult:
 
         if hit.is_homonym or hit.score < WEAK:
             reason = "homonym" if hit.is_homonym else f"low score {hit.score:.2f}"
+            if not hit.corroborated:
+                reason += " (nome apenas — sem CPF/nascimento)"
             review_rows.append(
                 {
                     "sq_candidato": sq,
@@ -137,6 +145,8 @@ def resolve(session: Session, *, year: int | None = None) -> ResolutionResult:
                     },
                     "mandate_snapshot": {
                         "member_id": hit.person.member_id, "uf": hit.person.uf,
+                        "house": hit.person.house.value,
+                        "corroborated": hit.corroborated,
                     },
                     "status": ReviewStatus.pending,
                 }
@@ -144,7 +154,14 @@ def resolve(session: Session, *, year: int | None = None) -> ResolutionResult:
             result.review += 1
             continue
 
-        tier = ConfidenceTier.auto_strong if hit.score >= STRONG else ConfidenceTier.auto_weak
+        # A name-only match can never reach auto_strong: score_pair already caps it
+        # below STRONG, and this guard keeps the invariant explicit rather than
+        # leaving it as an emergent property of two constants agreeing.
+        tier = (
+            ConfidenceTier.auto_strong
+            if (hit.score >= STRONG and hit.corroborated)
+            else ConfidenceTier.auto_weak
+        )
         emit_link(sq, hit.person, MatchMethod.probabilistic, hit.score, tier)
         if tier == ConfidenceTier.auto_strong:
             result.auto_strong += 1

@@ -7,8 +7,9 @@ services:
       POSTGRES_PASSWORD: resumo
       POSTGRES_DB: resumo
     ports:
-      # Host 5435 -> container 5432, to avoid clashing with other local Postgres instances.
-      - "5435:5432"
+      # Host 5439 -> container 5432, to avoid clashing with other local Postgres instances
+      # (5435-5438 are taken by other local stacks).
+      - "5439:5432"
     volumes:
       - resumo-pgdata:/var/lib/postgresql/data
     healthcheck:
