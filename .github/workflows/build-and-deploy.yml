@@ -23,6 +23,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  issues: write # abre/atualiza o aviso quando um coletor falha
 
 # Uma publicação por vez, sem cancelar a que já está coletando.
 concurrency:
@@ -39,8 +40,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
       - run: uv sync --extra dev
@@ -62,8 +63,8 @@ jobs:
           --health-cmd "pg_isready -U resumo -d resumo"
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
       - run: uv sync --extra dev
@@ -92,15 +93,15 @@ jobs:
         resumo-dos-candidatos/0.1 (transparencia eleitoral;
         ${{ vars.RESUMO_CONTACT || 'contato-nao-configurado@exemplo.invalid' }})
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
       - run: uv sync
 
       # Descobre sob qual URL o site será servido: subpath do projeto, ou raiz se
       # houver domínio próprio. É daqui que sai o prefixo dos links internos.
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
         id: pages
 
       # O snapshot carrega o banco E os PDFs. Os dois juntos, de propósito: o ledger
@@ -109,7 +110,7 @@ jobs:
       - name: Restaura o snapshot
         id: snapshot
         if: ${{ !inputs.full_backfill }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.SNAPSHOT_DIR }}
           key: snapshot-${{ github.run_id }}
@@ -136,6 +137,7 @@ jobs:
       # visível, não silêncio: o snapshot já guarda o que foi coletado antes, então
       # uma fonte fora do ar significa "sem dado novo hoje", não site fora do ar.
       - name: Coleta
+        id: coleta
         run: |
           HOJE="$(date -u +%F)"
           ANOS="2023,2024,2025,2026"
@@ -183,6 +185,42 @@ jobs:
             echo "### Todos os coletores rodaram sem erro" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+          # Publica a lista para o passo de aviso. Sem isso a degradação fica só no
+          # log: o Actions só avisa quando o workflow FALHA, e este de propósito não
+          # falha por fonte fora do ar — foi assim que nove coletores ficaram
+          # silenciosamente parados por duas execuções.
+          {
+            echo "falhas<<FIM"
+            printf '%s\n' "${falhas[@]}"
+            echo "FIM"
+          } >> "$GITHUB_OUTPUT"
+
+      # Um aviso que ninguém vê não é aviso. Mantém UMA issue aberta: comenta
+      # enquanto houver falha, fecha sozinha quando tudo volta a rodar.
+      - name: Avisa (ou encerra o aviso) sobre coletores
+        if: always() && steps.coleta.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FALHAS: ${{ steps.coleta.outputs.falhas }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITULO="Coletores falhando"
+          num=$(gh issue list --state open --limit 50 --json number,title \
+                --jq ".[] | select(.title == \"$TITULO\") | .number" | head -1)
+
+          if [ -n "$(echo "$FALHAS" | tr -d '[:space:]')" ]; then
+            corpo=$(printf 'Coletores que falharam na última execução:\n\n%s\n\nExecução: %s' \
+                    "$(echo "$FALHAS" | sed 's/^/- `/; s/$/`/')" "$RUN_URL")
+            if [ -n "$num" ]; then
+              gh issue comment "$num" --body "$corpo"
+            else
+              gh issue create --title "$TITULO" --body "$corpo"
+            fi
+          elif [ -n "$num" ]; then
+            gh issue comment "$num" --body "Todos os coletores voltaram a rodar sem erro em $RUN_URL — fechando."
+            gh issue close "$num"
+          fi
+
       # A fila é SAÍDA do resolve e as decisões são ENTRADA dele: num banco recém
       # construído a fila só existe depois da primeira passada. Então resolve roda,
       # as decisões versionadas são aplicadas, e resolve roda de novo já com elas.
@@ -218,12 +256,12 @@ jobs:
           du -sh "$SNAPSHOT_DIR"/*
       # Chave de cache é imutável: cada execução grava uma entrada nova e o LRU do
       # GitHub descarta as velhas. `restore-keys: snapshot-` pega sempre a mais recente.
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         with:
           path: ${{ env.SNAPSHOT_DIR }}
           key: snapshot-${{ github.run_id }}
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -235,4 +273,4 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
