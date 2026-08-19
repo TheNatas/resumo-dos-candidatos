@@ -8,6 +8,7 @@ from resumo.api.main import app
 from resumo.db.models import (
     Candidacy,
     CandidateMandateLink,
+    CandidatePhoto,
     ConfidenceTier,
     Expense,
     GovernmentProposal,
@@ -326,3 +327,54 @@ def test_proposal_shared_across_parties_is_not_called_the_party_s(session):
     assert proposal["scope"] == "shared"
     assert proposal["scope_label"] == "Documento compartilhado"
     assert "(PL, PP)" in proposal["scope_note"]
+
+
+def test_photo_route_serves_the_stored_file(session, tmp_path, monkeypatch):
+    from tests.helpers import TINY_JPEG
+
+    from resumo.config import get_settings
+
+    root = tmp_path / "storage"
+    (root / "foto" / "2026").mkdir(parents=True)
+    monkeypatch.setenv("RESUMO_STORAGE_DIR", str(root))
+    get_settings.cache_clear()
+    try:
+        _seed_incumbent(session)
+        jpg = root / "foto" / "2026" / "C1_abc.jpg"
+        jpg.write_bytes(TINY_JPEG)
+        session.add(
+            CandidatePhoto(
+                sq_candidato="C1", source="tse_bulk_foto", storage_path=str(jpg),
+                media_type="image/jpeg", content_hash="abc",
+            )
+        )
+        # C2 has a row pointing outside the storage root: the route must refuse it
+        # rather than turn a database row into an arbitrary-file read.
+        outside = tmp_path / "secret.jpg"
+        outside.write_bytes(b"segredo")
+        session.add(
+            CandidatePhoto(
+                sq_candidato="C2", source="tse_bulk_foto", storage_path=str(outside),
+                media_type="image/jpeg", content_hash="def",
+            )
+        )
+        session.commit()
+
+        ok = client.get("/foto/C1.jpg")
+        assert ok.status_code == 200
+        assert ok.headers["content-type"] == "image/jpeg"
+        assert ok.content == TINY_JPEG
+
+        assert client.get("/foto/C2.jpg").status_code == 404
+        assert client.get("/foto/NAOEXISTE.jpg").status_code == 404
+    finally:
+        get_settings.cache_clear()
+
+
+def test_detail_reports_a_missing_photo_as_null(session):
+    _seed_incumbent(session)
+    detail = client.get("/api/candidates/C1").json()
+    assert detail["photo"] is None
+    assert detail["candidacy"]["foto_url"] is None
+    # As iniciais existem sempre — é o que a página desenha no lugar da foto.
+    assert detail["candidacy"]["iniciais"] == "JS"

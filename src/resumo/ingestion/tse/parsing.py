@@ -1,4 +1,5 @@
-"""Parse TSE bulk products: zip-of-CSVs, semicolon-delimited, Latin-1 (ISO-8859-1).
+"""Parse TSE bulk products: zip-of-CSVs, semicolon-delimited, Latin-1 (ISO-8859-1),
+plus the zip-of-binaries products (propostas, fotos) at the bottom of the module.
 
 TSE national zips contain one CSV per UF plus (sometimes) a consolidated *_BRASIL
 file. To avoid double-counting we prefer the BRASIL file when present, else read
@@ -90,10 +91,35 @@ def iter_records(
                 yield from _csv_rows(text, name, uf_set)
 
 
-def list_pdf_members(source: Path | str | bytes) -> list[str]:
+# The bulk zips of *binary* products (propostas, fotos) carry no manifest: the only
+# link back to a candidacy is the digit run in the member path. 10+ digits so a
+# year or a page number can never be read as an SQ_CANDIDATO (real ones are ~12).
+_DIGIT_RUN = re.compile(r"\d{10,}")
+
+
+def match_sq(filename: str, known: set[str]) -> str | None:
+    """The SQ_CANDIDATO a binary member belongs to, or None when no digit run in the
+    path is a candidacy we hold. Never guesses: an unmatched file stays unattributed."""
+    for run in _DIGIT_RUN.findall(filename):
+        if run in known:
+            return run
+    return None
+
+
+def _members_with_suffix(source: Path | str | bytes, suffixes: tuple[str, ...]) -> list[str]:
     data = source if isinstance(source, bytes) else Path(source).read_bytes()
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        return [n for n in zf.namelist() if n.lower().endswith(".pdf")]
+        return [n for n in zf.namelist() if n.lower().endswith(suffixes)]
+
+
+def list_pdf_members(source: Path | str | bytes) -> list[str]:
+    return _members_with_suffix(source, (".pdf",))
+
+
+def list_image_members(source: Path | str | bytes) -> list[str]:
+    """TSE ships the photo bundles as JPEG, but the extension is not contractual —
+    accept the other still formats rather than silently publishing nobody's face."""
+    return _members_with_suffix(source, (".jpg", ".jpeg", ".png", ".webp"))
 
 
 def read_member(source: Path | str | bytes, member: str) -> bytes:

@@ -17,28 +17,34 @@ the three cases mean completely different things to a reader:
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from resumo import attendance as att
 from resumo import cargos
 from resumo.db.models import (
     AccountFiling,
     AmendmentType,
-    AttendanceRecord,
+    AttendanceSummary,
+    AttendanceUnit,
     BudgetAmendment,
     CampaignExpense,
     CampaignRevenue,
     Candidacy,
     CandidateMandateLink,
+    CandidatePhoto,
     ConfidenceTier,
     Expense,
     GovernmentProposal,
     Mandate,
+    MandateLeave,
     Proposition,
     Vote,
 )
+from resumo.util import initials, normalize_name
 
 ACCEPTED_TIERS = (ConfidenceTier.auto_strong, ConfidenceTier.auto_weak)
 
@@ -58,6 +64,16 @@ _CONFIRMED_REELECTION = (
 )
 
 
+# Same shape as `_CONFIRMED_REELECTION`: a listing needs to know whether each row
+# has a face without one query per card.
+_HAS_PHOTO = (
+    select(1)
+    .select_from(CandidatePhoto)
+    .where(CandidatePhoto.sq_candidato == Candidacy.sq_candidato)
+    .exists()
+)
+
+
 def search_candidacies(
     session: Session,
     *,
@@ -69,7 +85,9 @@ def search_candidacies(
     year: int | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    stmt = select(Candidacy, _CONFIRMED_REELECTION.label("incumbent"))
+    stmt = select(
+        Candidacy, _CONFIRMED_REELECTION.label("incumbent"), _HAS_PHOTO.label("has_photo")
+    )
     if q:
         # Accent-insensitive substring match on the normalized name (trgm index).
         stmt = stmt.where(Candidacy.nome_normalizado.ilike(f"%{_norm(q)}%"))
@@ -87,8 +105,8 @@ def search_candidacies(
         stmt = stmt.where(Candidacy.ano_eleicao == year)
     stmt = stmt.order_by(Candidacy.nome_candidato).limit(limit)
     return [
-        _candidacy_summary(c, incumbent_confirmed=incumbent)
-        for c, incumbent in session.execute(stmt)
+        _candidacy_summary(c, incumbent_confirmed=incumbent, has_photo=has_photo)
+        for c, incumbent, has_photo in session.execute(stmt)
     ]
 
 
@@ -105,17 +123,17 @@ def candidacies_in_scope(
     `search_candidacies` with a big limit: which pages get published is an explicit
     scoped query, never whatever a search box happened to ask for.
     """
-    stmt = select(Candidacy, _CONFIRMED_REELECTION.label("incumbent")).where(
-        Candidacy.ano_eleicao == year
-    )
+    stmt = select(
+        Candidacy, _CONFIRMED_REELECTION.label("incumbent"), _HAS_PHOTO.label("has_photo")
+    ).where(Candidacy.ano_eleicao == year)
     if ufs:
         stmt = stmt.where(Candidacy.sg_uf.in_([u.upper() for u in ufs]))
     if cargo_codes:
         stmt = stmt.where(Candidacy.cd_cargo.in_(list(cargo_codes)))
     stmt = stmt.order_by(Candidacy.nome_candidato, Candidacy.sq_candidato)
     return [
-        _candidacy_summary(c, incumbent_confirmed=incumbent)
-        for c, incumbent in session.execute(stmt)
+        _candidacy_summary(c, incumbent_confirmed=incumbent, has_photo=has_photo)
+        for c, incumbent, has_photo in session.execute(stmt)
     ]
 
 
@@ -151,6 +169,33 @@ def get_proposals(session: Session, sq: str) -> list[GovernmentProposal]:
             select(GovernmentProposal).where(GovernmentProposal.sq_candidato == sq)
         ).scalars()
     )
+
+
+def get_photo(session: Session, sq: str) -> CandidatePhoto | None:
+    return session.get(CandidatePhoto, sq)
+
+
+# ── Foto: de onde ela vem ────────────────────────────────────────────────────
+# The photo the candidate filed at registration, republished from the TSE bundle.
+# Credited on the page for a reason: it is an official document, not a press
+# portrait the campaign chose, and a reader comparing it to a glossy poster should
+# know which of the two they are looking at. No other image is ever substituted —
+# a face pulled off social media would be the one unofficial thing on the site.
+PHOTO_CREDIT = "Foto oficial de registro da candidatura (TSE)"
+
+
+def _photo_payload(photo: CandidatePhoto | None, *, include_storage_path: bool) -> dict | None:
+    if photo is None:
+        return None
+    return {
+        "url": f"/foto/{photo.sq_candidato}.jpg",
+        "source": photo.source,
+        "media_type": photo.media_type,
+        "credit": PHOTO_CREDIT,
+        # Build-time only, exactly like the proposta payload: `storage_path` is a
+        # server filesystem path and must never reach a reader.
+        **({"_storage_path": photo.storage_path} if include_storage_path else {}),
+    }
 
 
 # ── Proposta: de quem é o documento ──────────────────────────────────────────
@@ -248,6 +293,109 @@ def get_accepted_link(session: Session, sq: str) -> tuple[CandidateMandateLink, 
     return (row[0], row[1]) if row else None
 
 
+def _sum_optional(values: Sequence[int | None]) -> int | None:
+    """Soma ignorando nulos, mas devolve ``None`` quando NENHUMA linha tem o número.
+
+    A diferença é publicada: ``0`` quer dizer "a fonte contou e deu zero", ``None``
+    quer dizer "esta fonte não publica essa distinção". Colapsar os dois em zero faria
+    a ficha afirmar "nenhuma falta injustificada" para a ALESC, que simplesmente não
+    classifica ausência.
+    """
+    known = [v for v in values if v is not None]
+    return sum(known) if known else None
+
+
+def attendance_payload(session: Session, mandate_id: uuid.UUID) -> dict:
+    """Frequência do mandato, **uma linha por unidade publicada pela fonte**.
+
+    Nada é convertido de sessão para dia ou vice-versa: a ficha imprime o número com o
+    substantivo da fonte. A Câmara publica as duas réguas e as duas aparecem; Senado e
+    ALESC publicam sessões e só sessões. Ver :mod:`resumo.attendance`.
+
+    Os anos são somados dentro de cada régua — cada ano traz o próprio denominador
+    (que na Câmara já vem restrito ao período de exercício do parlamentar), então a
+    soma continua sendo "quantas de quantas".
+    """
+    rows = list(
+        session.execute(
+            select(AttendanceSummary).where(
+                AttendanceSummary.mandate_id == mandate_id,
+                AttendanceSummary.ambito == att.AMBITO_PLENARIO,
+            )
+        ).scalars()
+    )
+    if not rows:
+        return {"available": False, "rows": [], "anos": [], "note": None, "fonte": None}
+
+    metrica = Counter(r.metrica for r in rows).most_common(1)[0][0]
+    metric = att.metric_for(metrica)
+    ordem = list(metric.unidades) if metric else [AttendanceUnit.DIA, AttendanceUnit.SESSAO]
+
+    payload_rows = []
+    for unidade in ordem:
+        group = [r for r in rows if r.unidade is unidade]
+        if not group:
+            continue
+        total = sum(r.total or 0 for r in group)
+        presenca = sum(r.presenca or 0 for r in group)
+        payload_rows.append(
+            {
+                "unidade": unidade.value,
+                "unidade_label": unidade.label,
+                "denominador": (metric.denominador.get(unidade) if metric else unidade.label),
+                "total": total,
+                "presenca": presenca,
+                "ausencia_total": max(total - presenca, 0),
+                "ausencia_justificada": _sum_optional([r.ausencia_justificada for r in group]),
+                "ausencia_nao_justificada": _sum_optional(
+                    [r.ausencia_nao_justificada for r in group]
+                ),
+                "ausencia_nao_classificada": _sum_optional(
+                    [r.ausencia_nao_classificada for r in group]
+                ),
+                # O denominador varia de parlamentar para parlamentar (quem se licencia
+                # tem menos sessões no período de exercício), então o absoluto sozinho
+                # ordena mal — o percentual é o número comparável.
+                "percentual_presenca": round(presenca * 100 / total, 1) if total else None,
+                "anos": sorted({r.ano for r in group}),
+            }
+        )
+
+    return {
+        "available": bool(payload_rows),
+        "rows": payload_rows,
+        "anos": sorted({r.ano for r in rows}),
+        "fonte": metric.fonte if metric else None,
+        "derivada": metric.derived if metric else None,
+        "note": metric.note if metric else None,
+        "source_url": next((r.source_url for r in rows if r.source_url), None),
+    }
+
+
+def leaves_payload(session: Session, mandate_id: uuid.UUID) -> dict | None:
+    """Licenças formais do mandato, em dias corridos — ou ``None`` quando não há.
+
+    Fica fora da conta de presença de propósito: dias de calendário e sessões são
+    réguas diferentes, e somá-las produziria um número que nenhuma fonte publica.
+    """
+    rows = list(
+        session.execute(
+            select(MandateLeave).where(MandateLeave.mandate_id == mandate_id)
+        ).scalars()
+    )
+    if not rows:
+        return None
+    dias = sum(att.leave_days(r.data_inicio, r.data_fim) or 0 for r in rows)
+    tipos = Counter(r.descricao_tipo for r in rows if r.descricao_tipo)
+    return {
+        "count": len(rows),
+        "dias": dias,
+        "tipos": [{"descricao": nome, "count": n} for nome, n in tipos.most_common()],
+        "primeira": min((r.data_inicio for r in rows if r.data_inicio), default=None),
+        "ultima": max((r.data_fim for r in rows if r.data_fim), default=None),
+    }
+
+
 def track_record_summary(session: Session, mandate_id: uuid.UUID) -> dict:
     votes_total = session.scalar(
         select(func.count()).select_from(Vote).where(Vote.mandate_id == mandate_id)
@@ -262,20 +410,6 @@ def track_record_summary(session: Session, mandate_id: uuid.UUID) -> dict:
             Proposition.authoring_mandate_id == mandate_id
         )
     )
-    present = session.scalar(
-        select(func.count()).select_from(AttendanceRecord).where(
-            AttendanceRecord.mandate_id == mandate_id, AttendanceRecord.presente.is_(True)
-        )
-    )
-    # Only rows where presence is actually known. A NULL `presente` means the source
-    # published a code it does not define; counting it in the denominator would turn
-    # "we don't know" into a falta.
-    events_total = session.scalar(
-        select(func.count()).select_from(AttendanceRecord).where(
-            AttendanceRecord.mandate_id == mandate_id,
-            AttendanceRecord.presente.isnot(None),
-        )
-    )
     expense_total = session.scalar(
         select(func.coalesce(func.sum(Expense.valor_liquido), 0)).where(
             Expense.mandate_id == mandate_id
@@ -285,10 +419,9 @@ def track_record_summary(session: Session, mandate_id: uuid.UUID) -> dict:
         "votes_total": votes_total or 0,
         "votes_sim": votes_sim or 0,
         "propositions_total": props or 0,
-        "attendance_present": present or 0,
-        "attendance_events": events_total or 0,
         "expense_total": float(expense_total or 0),
-        "attendance_note": "Presença derivada de listas de eventos; faltas são estimadas.",
+        "attendance": attendance_payload(session, mandate_id),
+        "leaves": leaves_payload(session, mandate_id),
     }
 
 
@@ -420,12 +553,16 @@ def candidate_detail(
         }
         track = track_record_summary(session, mandate.id)
         amendments = amendments_summary(session, mandate.id)
+    photo = get_photo(session, sq)
     proposals = get_proposals(session, sq)
     # Which of these PDFs are shared with other candidacies — resolved once for the
     # whole list rather than per row.
     scopes = shared_proposal_scopes(session, proposals, ano_eleicao=cand.ano_eleicao)
     return {
-        "candidacy": _candidacy_summary(cand, incumbent_confirmed=accepted is not None),
+        "candidacy": _candidacy_summary(
+            cand, incumbent_confirmed=accepted is not None, has_photo=photo is not None
+        ),
+        "photo": _photo_payload(photo, include_storage_path=include_storage_path),
         "proposals": [
             # `storage_path` is a server filesystem path and must not leave the
             # process: it leaks the deploy's directory layout and gives a reader
@@ -458,11 +595,17 @@ def candidate_detail(
     }
 
 
-def _candidacy_summary(c: Candidacy, *, incumbent_confirmed: bool) -> dict:
+def _candidacy_summary(
+    c: Candidacy, *, incumbent_confirmed: bool, has_photo: bool = False
+) -> dict:
     return {
         "sq_candidato": c.sq_candidato,
         "nome": c.nome_candidato,
         "nome_urna": c.nome_urna,
+        # None when TSE published no photo for this candidacy — the page draws the
+        # initials block instead of leaving a broken image where a face should be.
+        "foto_url": f"/foto/{c.sq_candidato}.jpg" if has_photo else None,
+        "iniciais": initials(c.nome_candidato or c.nome_urna),
         "nome_normalizado": c.nome_normalizado,
         "ano": c.ano_eleicao,
         "cd_cargo": c.cd_cargo,
@@ -483,6 +626,4 @@ def _candidacy_summary(c: Candidacy, *, incumbent_confirmed: bool) -> dict:
 
 
 def _norm(q: str) -> str:
-    from resumo.util import normalize_name
-
     return normalize_name(q) or q

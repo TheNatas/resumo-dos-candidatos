@@ -9,7 +9,6 @@ fragility is a documented risk; DivulgaCand's per-candidate path is the fallback
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 from sqlalchemy import select
@@ -23,14 +22,6 @@ from resumo.ingestion.ledger import already_ingested, content_hash, record_inges
 from resumo.ingestion.tse import ckan, parsing
 
 logger = logging.getLogger("resumo.ingestion.tse")
-_DIGIT_RUN = re.compile(r"\d{10,}")
-
-
-def _match_sq(filename: str, known: set[str]) -> str | None:
-    for run in _DIGIT_RUN.findall(filename):
-        if run in known:
-            return run
-    return None
 
 
 class PropostaGovernoCollector(Collector):
@@ -97,7 +88,7 @@ class PropostaGovernoCollector(Collector):
             rows: list[dict] = []
             orphans = 0
             for member in parsing.list_pdf_members(data_path):
-                sq = _match_sq(member, known)
+                sq = parsing.match_sq(member, known)
                 if not sq:
                     orphans += 1
                     continue

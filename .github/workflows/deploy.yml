@@ -1,0 +1,173 @@
+# Publica o site a partir do snapshot JÁ COLETADO. Não fala com nenhuma fonte
+# externa: lê o banco do último snapshot, resolve, renderiza e sobe para o Pages.
+#
+# É o caminho rápido do projeto. A coleta leva ~3 h e vive em `collect.yml`; este
+# workflow roda em minutos, porque mudar código não exige recoletar dado. Medido na
+# execução 32180948770: 172,3 min de coleta contra 0,7 min de todo o resto.
+#
+# Dispara em push (mudou código ou `review-decisions.yml` → republica), por chamada
+# do `collect.yml` (chegou dado novo → republica) e na mão.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_call: # o collect.yml chama isto ao terminar a coleta
+  workflow_dispatch:
+
+permissions:
+  contents: read # só LÊ o snapshot; quem escreve é o collect.yml
+  pages: write
+  id-token: write
+
+env:
+  RESUMO_DATABASE_URL: postgresql+psycopg://resumo:resumo@localhost:5432/resumo
+  RESUMO_STORAGE_DIR: ./data/storage
+  SNAPSHOT_DIR: .snapshot
+  SNAPSHOT_TAG: snapshot
+
+jobs:
+  # Falha em segundos quando o arquivo de decisões está quebrado, sem subir banco.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run resumo review validate
+      - run: uv run ruff check src tests
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: resumo
+          POSTGRES_PASSWORD: resumo
+          POSTGRES_DB: resumo
+        # 5439 é a porta que o conftest espera (a mesma do docker-compose local).
+        ports: ["5439:5432"]
+        options: >-
+          --health-cmd "pg_isready -U resumo -d resumo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run pytest -q
+
+  render:
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: resumo
+          POSTGRES_PASSWORD: resumo
+          POSTGRES_DB: resumo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U resumo -d resumo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync
+
+      # Descobre sob qual URL o site será servido: subpath do projeto, ou raiz se
+      # houver domínio próprio. É daqui que sai o prefixo dos links internos.
+      - uses: actions/configure-pages@v6
+        id: pages
+
+      # O snapshot carrega o banco E os arquivos binários (PDFs das propostas, JPEGs
+      # das fotos). Os dois juntos, de propósito: o ledger RawIngestion trata
+      # artefato inalterado como no-op, então um banco restaurado sem os arquivos no
+      # disco nunca os rebaixaria — propostas e fotos sumiriam do site.
+      #
+      # Sem snapshot não há o que publicar. Falhar aqui mantém no ar o site anterior,
+      # que é melhor que publicar uma página vazia.
+      - name: Baixa o snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$SNAPSHOT_DIR"
+          if ! gh release download "$SNAPSHOT_TAG" --dir "$SNAPSHOT_DIR" --clobber; then
+            echo "::error::Nenhum snapshot publicado na release '$SNAPSHOT_TAG'. Este workflow renderiza a partir de dado já coletado — rode 'collect' (Actions → collect → Run workflow) para criar o primeiro snapshot."
+            exit 1
+          fi
+          du -sh "$SNAPSHOT_DIR"/*
+
+      - name: Carrega o snapshot no Postgres
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v "$PWD/$SNAPSHOT_DIR:/s" postgres:16 \
+            pg_restore --no-owner --clean --if-exists \
+              -d "postgresql://resumo:resumo@localhost:5432/resumo" /s/resumo.dump
+          tar -xzf "$SNAPSHOT_DIR/storage.tar.gz" -C .
+          echo "arquivos restaurados: $(du -sh "$RESUMO_STORAGE_DIR" 2>/dev/null | cut -f1 || echo 0)"
+
+      # O snapshot vem do schema de ontem; o código, do commit de agora. A migração
+      # aqui é o que deixa um push que mexe no schema publicar sem esperar a coleta.
+      - name: Migrações
+        run: uv run resumo db-upgrade
+
+      # A fila é SAÍDA do resolve e as decisões são ENTRADA dele: num banco recém
+      # construído a fila só existe depois da primeira passada. Então resolve roda,
+      # as decisões versionadas são aplicadas, e resolve roda de novo já com elas.
+      #
+      # Roda aqui, e não só na coleta, porque `review-decisions.yml` é versionado:
+      # editar uma decisão é um push, e o efeito dela precisa sair no site sem
+      # esperar as ~3 h da coleta. O resultado é descartado junto com o banco
+      # efêmero — são segundos, e refazer é mais barato que coordenar duas escritas
+      # no snapshot.
+      - name: Resolve → aplica decisões versionadas → resolve
+        run: |
+          uv run resumo resolve --year 2026
+          uv run resumo review apply
+          uv run resumo resolve --year 2026
+
+      - name: Renderiza o site
+        run: |
+          uv run resumo render \
+            --out _site \
+            --base-url "${{ steps.pages.outputs.base_path }}" \
+            --site-url "${{ steps.pages.outputs.base_url }}"
+          du -sh --apparent-size _site
+          # Se a renderização saiu vazia, algo está errado a montante: melhor falhar
+          # e manter no ar o site anterior do que publicar uma página em branco.
+          python3 - <<'PY'
+          import json, sys
+          n = len(json.load(open("_site/api/candidates.json")))
+          print(f"{n} candidaturas renderizadas")
+          sys.exit(0 if n else "render vazio — publicação abortada")
+          PY
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: render
+    runs-on: ubuntu-latest
+    # O Pages aceita UMA publicação por vez, então o portão fica aqui e não no
+    # workflow inteiro: dois pushes seguidos renderizam em paralelo e só serializam
+    # neste último passo, que leva segundos. Era este grupo que, no workflow único,
+    # prendia um push atrás de 3 h de coleta.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5

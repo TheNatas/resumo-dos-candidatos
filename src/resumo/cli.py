@@ -112,6 +112,18 @@ def tse_proposta(
     _run(PropostaGovernoCollector(), year=year, uf=uf, source=source)
 
 
+@collect.command("tse-fotos")
+def tse_fotos(
+    year: Optional[int] = None,
+    uf: Optional[str] = typer.Option(None, help="UF única; omitir = todas as UFs do escopo"),
+    source: Optional[Path] = None,
+) -> None:
+    """Fotos oficiais de registro das candidaturas (pacote por UF do TSE)."""
+    from resumo.ingestion.tse.foto_candidato import FotoCandidatoCollector
+
+    _run(FotoCandidatoCollector(), year=year, uf=uf, source=source)
+
+
 @collect.command("tse-contas")
 def tse_contas(
     year: Optional[int] = None,

@@ -15,6 +15,7 @@ What comes out is self-contained (no CDN, no API calls) and is published as-is:
       api/candidates.json           índice de busca
       api/candidates/<sq>.json      mesma resposta do endpoint JSON
       proposta/<id>.pdf             as propostas de governo coletadas
+      foto/<sq>.jpg                 as fotos oficiais de registro
       static/                       CSS
       404.html · robots.txt · sitemap.xml · .nojekyll
 """
@@ -41,10 +42,14 @@ _WEB = Path(__file__).resolve().parent / "web"
 class RenderResult:
     pages: int
     proposals: int
+    photos: int
     out: Path
 
     def __str__(self) -> str:  # mirrors the collectors' one-line CLI output
-        return f"render: {self.pages} fichas, {self.proposals} propostas → {self.out}"
+        return (
+            f"render: {self.pages} fichas, {self.proposals} propostas, "
+            f"{self.photos} fotos → {self.out}"
+        )
 
 
 def _now_brt() -> str:
@@ -141,6 +146,31 @@ def _copy_proposals(detail: dict, out: Path) -> int:
     return copied
 
 
+def _copy_photo(detail: dict, out: Path) -> bool:
+    """Copy this candidacy's photo to its public path, or drop it from the payload.
+
+    Returns whether the file was actually published. A row whose file is missing or
+    outside the storage root must not leave a URL behind: a static site that links
+    an image it did not publish shows a broken frame where a face should be, which
+    reads as a fact about the candidate rather than about the build.
+    """
+    photo = detail.get("photo")
+    if not photo:
+        return False
+    source = photo.pop("_storage_path", None)
+    path = Path(source).resolve() if source else None
+    root = get_settings().storage_path().resolve()
+    # Same confinement rule as the live route: the path comes from a database row.
+    if path is None or root not in path.parents or not path.is_file():
+        detail["photo"] = None
+        detail["candidacy"]["foto_url"] = None
+        return False
+    target = out / "foto" / f"{detail['candidacy']['sq_candidato']}.jpg"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, target)
+    return True
+
+
 def render_site(
     session: Session,
     *,
@@ -170,12 +200,19 @@ def render_site(
     )
 
     proposals = 0
+    photos = 0
     for summary in summaries:
         sq = summary["sq_candidato"]
         detail = queries.candidate_detail(session, sq, include_storage_path=True)
         if detail is None:  # pragma: no cover — the summary came from the same table
             continue
         proposals += _copy_proposals(detail, out)
+        if _copy_photo(detail, out):
+            photos += 1
+        else:
+            # `summaries` is what the index page and the search index are rendered
+            # from, and it was built before the file was known to be publishable.
+            summary["foto_url"] = None
         _write(
             out / "candidato" / sq / "index.html",
             env.get_template("candidate.html").render(d=detail),
@@ -207,7 +244,7 @@ def render_site(
     if site_url:
         _write_sitemap(out, site_url.rstrip("/"), summaries, generated_at)
 
-    return RenderResult(pages=len(summaries), proposals=proposals, out=out)
+    return RenderResult(pages=len(summaries), proposals=proposals, photos=photos, out=out)
 
 
 def _write_robots(out: Path, site_url: str | None) -> None:

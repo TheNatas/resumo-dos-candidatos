@@ -5,14 +5,25 @@
       data-cargo="{{ c.cargo or '' }}" data-partido="{{ c.partido or '' }}"
       data-reeleicao="{{ 'sim' if c.incumbent_confirmed else 'nao' }}">
     <a href="{{ base_url }}/candidato/{{ c.sq_candidato }}">
-      <strong>{{ c.nome_urna or c.nome }}</strong>
-      <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
-      {% if c.resultado %}<span class="badge">{{ c.resultado }}</span>{% endif %}
-      {% if c.history_status == 'no_public_source' %}
-        <span class="badge badge-muted" title="{{ c.history_note }}">sem fonte de histórico</span>
-      {% elif c.history_status == 'partial' %}
-        <span class="badge badge-muted" title="{{ c.history_note }}">histórico parcial</span>
+      {# alt="" de propósito: o nome está no mesmo link, e descrever a foto de novo
+         faria o leitor de tela anunciar a mesma pessoa duas vezes. `loading=lazy`
+         importa aqui — o site estático traz TODAS as candidaturas do escopo nesta
+         página, e sem isso a home baixaria centenas de imagens de uma vez. #}
+      {% if c.foto_url %}
+        <img class="thumb" src="{{ base_url }}{{ c.foto_url }}" alt="" loading="lazy" decoding="async">
+      {% else %}
+        <span class="thumb thumb-vazio" aria-hidden="true">{{ c.iniciais }}</span>
       {% endif %}
+      <span class="card-texto">
+        <strong>{{ c.nome_urna or c.nome }}</strong>
+        <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
+        {% if c.resultado %}<span class="badge">{{ c.resultado }}</span>{% endif %}
+        {% if c.history_status == 'no_public_source' %}
+          <span class="badge badge-muted" title="{{ c.history_note }}">sem fonte de histórico</span>
+        {% elif c.history_status == 'partial' %}
+          <span class="badge badge-muted" title="{{ c.history_note }}">histórico parcial</span>
+        {% endif %}
+      </span>
     </a>
   </li>
   {% endfor %}

@@ -42,6 +42,22 @@ def normalize_name(value: str | None) -> str | None:
     return v or None
 
 
+# Conectivos não são iniciais: "JOSÉ DA SILVA" é JS, não JD.
+_NAME_PARTICLES = {"DA", "DE", "DO", "DAS", "DOS", "E", "D"}
+
+
+def initials(value: str | None, *, limit: int = 2) -> str:
+    """Up to `limit` initials for a name, for the placeholder shown when a candidacy
+    has no official photo. Empty string when there is no usable name — the caller
+    renders a blank block rather than a "?" that reads like missing data about the
+    person instead of a missing file."""
+    words = [w for w in (normalize_name(value) or "").split() if w not in _NAME_PARTICLES]
+    if not words:
+        return ""
+    picked = words if len(words) <= limit else [words[0], *words[-(limit - 1) :]]
+    return "".join(w[0] for w in picked)
+
+
 def only_digits(value: str | None) -> str | None:
     if value is None:
         return None

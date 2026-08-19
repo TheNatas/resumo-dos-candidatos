@@ -5,10 +5,10 @@ ALESC has no API, so every legislative source is HTML. This module deliberately 
 ``beautifulsoup4``: the dependency surface of this project is a feature, and the five
 ALESC documents we read are small and structurally simple.
 
-:class:`Node` + :func:`parse_html` build a forgiving mini-DOM (stray end tags are
-ignored, void elements are handled, ``<script>``/``<style>`` bodies are dropped) and
-the ``parse_*`` functions below query it. Selecting on **CSS classes** — never on
-label text — is the rule: ALESC renders vote positions as bootstrap badges
+The mini-DOM itself lives in :mod:`resumo.ingestion.html` (the Câmara presence
+report needs the same tree) and is re-exported here, so every ``parse_*`` function
+below reads exactly as it did before. Selecting on **CSS classes** — never on label
+text — is the rule: ALESC renders vote positions as bootstrap badges
 (``text-bg-success`` = Sim, ``text-bg-danger`` = Não) and the visible label is the
 part most likely to be reworded.
 
@@ -27,11 +27,19 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass
-from html.parser import HTMLParser
 
+from resumo.ingestion.html import Node, find, find_all, iter_elements, parse_html, text_of
 from resumo.util import clean, parse_date, parse_int
+
+__all__ = [
+    "AlescParseError", "ExtratoVotacao", "Node", "OrdemItem", "PresencaEntry",
+    "PropositionCard", "RosterEntry", "SessionRef", "find", "find_all",
+    "is_current_member_label", "is_electoral_blackout", "next_page_url", "parse_extrato_votacao",
+    "parse_html", "parse_iniciativa_options", "parse_ordem_do_dia", "parse_presenca",
+    "parse_proposition_cards", "parse_result_total", "parse_roster_html",
+    "parse_roster_payload", "parse_session_index", "split_codigo", "text_of",
+]
 
 logger = logging.getLogger("resumo.ingestion.alesc")
 
@@ -44,132 +52,8 @@ class AlescParseError(RuntimeError):
     """
 
 
-# ── Mini-DOM ─────────────────────────────────────────────────────────────────
-_VOID = frozenset(
-    {
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr",
-    }
-)
-_OPAQUE = frozenset({"script", "style"})
-_WS = re.compile(r"\s+")
-
-
-class Node:
-    """One element in the mini-DOM. ``children`` mixes :class:`Node` and ``str``."""
-
-    __slots__ = ("attrs", "children", "parent", "tag")
-
-    def __init__(self, tag: str, attrs: dict[str, str] | None = None, parent: Node | None = None):
-        self.tag = tag
-        self.attrs: dict[str, str] = attrs or {}
-        self.children: list[Node | str] = []
-        self.parent = parent
-
-    def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return f"<Node {self.tag} {self.attrs}>"
-
-    def get(self, name: str, default: str | None = None) -> str | None:
-        return self.attrs.get(name, default)
-
-    @property
-    def classes(self) -> frozenset[str]:
-        return frozenset((self.attrs.get("class") or "").split())
-
-
-class _TreeBuilder(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.root = Node("#document")
-        self._stack: list[Node] = [self.root]
-
-    def _append(self, tag: str, attrs: list[tuple[str, str | None]]) -> Node:
-        node = Node(tag, {k: (v or "") for k, v in attrs}, self._stack[-1])
-        self._stack[-1].children.append(node)
-        return node
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        node = self._append(tag, attrs)
-        if tag not in _VOID:
-            self._stack.append(node)
-
-    def handle_startendtag(self, tag: str, attrs) -> None:
-        self._append(tag, attrs)
-
-    def handle_endtag(self, tag: str) -> None:
-        # Pop to the nearest matching open tag; a stray close tag is ignored rather
-        # than corrupting the stack (ALESC markup is machine-generated but sloppy).
-        for i in range(len(self._stack) - 1, 0, -1):
-            if self._stack[i].tag == tag:
-                del self._stack[i:]
-                return
-
-    def handle_data(self, data: str) -> None:
-        if self._stack[-1].tag in _OPAQUE:
-            return
-        self._stack[-1].children.append(data)
-
-
-def parse_html(markup: str) -> Node:
-    """Parse `markup` into a forgiving mini-DOM rooted at a synthetic ``#document``."""
-    builder = _TreeBuilder()
-    builder.feed(markup or "")
-    builder.close()
-    return builder.root
-
-
-def iter_elements(root: Node) -> Iterator[Node]:
-    """Depth-first walk over element nodes below (not including) `root`."""
-    for child in root.children:
-        if isinstance(child, Node):
-            yield child
-            yield from iter_elements(child)
-
-
-def find_all(
-    root: Node,
-    tag: str | None = None,
-    *,
-    cls: str | frozenset[str] | set[str] | None = None,
-    attr: str | None = None,
-) -> list[Node]:
-    """Elements matching tag / required class(es) / presence of an attribute."""
-    wanted = frozenset([cls]) if isinstance(cls, str) else (frozenset(cls) if cls else None)
-    out = []
-    for node in iter_elements(root):
-        if tag is not None and node.tag != tag:
-            continue
-        if wanted is not None and not wanted <= node.classes:
-            continue
-        if attr is not None and attr not in node.attrs:
-            continue
-        out.append(node)
-    return out
-
-
-def find(root: Node, tag: str | None = None, **kw) -> Node | None:
-    found = find_all(root, tag, **kw)
-    return found[0] if found else None
-
-
-def text_of(node: Node | None, *, exclude: Node | None = None) -> str:
-    """Whitespace-collapsed text of a subtree, optionally skipping one child subtree."""
-    if node is None:
-        return ""
-    parts: list[str] = []
-
-    def walk(n: Node) -> None:
-        for child in n.children:
-            if isinstance(child, str):
-                parts.append(child)
-            elif child is not exclude and child.tag not in _OPAQUE:
-                walk(child)
-
-    walk(node)
-    return _WS.sub(" ", "".join(parts)).strip()
-
-
 # ── Shared regexes ───────────────────────────────────────────────────────────
+_WS = re.compile(r"\s+")
 _SLUG_RE = re.compile(r"/deputado/([^/?#]+)")
 _SESSION_RE = re.compile(r"/sessoes-plenarias/([A-Za-z0-9]+)(?:/([a-z-]+))?")
 _PROPOSICAO_RE = re.compile(r"/proposicoes/([A-Za-z0-9]+)")

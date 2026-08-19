@@ -5,8 +5,29 @@
 <a href="{{ base_url }}/" class="back">← voltar</a>
 
 <article class="ficha">
-  <h1>{{ c.nome_urna or c.nome }}</h1>
-  <p class="subtitle">{{ c.nome }}</p>
+  <div class="identidade">
+    {% if d.photo %}
+      {# alt names the person and says which photo this is: a reader using a screen
+         reader gets the same "this is the registration photo" cue the caption gives
+         everyone else. #}
+      <img class="foto" src="{{ base_url }}{{ d.photo.url }}"
+           alt="Foto de registro de {{ c.nome_urna or c.nome }}">
+    {% else %}
+      {# Não há foto oficial: um bloco com as iniciais, nunca uma imagem de outra
+         fonte. A silhueta genérica diria "sem foto" com a mesma força para todos;
+         as iniciais pelo menos identificam a ficha. #}
+      <span class="foto foto-vazia" aria-hidden="true">{{ c.iniciais }}</span>
+    {% endif %}
+    <div class="identidade-texto">
+      <h1>{{ c.nome_urna or c.nome }}</h1>
+      <p class="subtitle">{{ c.nome }}</p>
+      {% if d.photo %}
+        <p class="note credito">{{ d.photo.credit }}</p>
+      {% else %}
+        <p class="note credito">O TSE não publicou foto de registro para esta candidatura.</p>
+      {% endif %}
+    </div>
+  </div>
   <ul class="attrs">
     <li><span>Cargo</span>{{ c.cargo }}</li>
     <li><span>UF</span>{{ c.uf }}</li>
@@ -91,10 +112,79 @@
         <li><strong>{{ t.votes_total }}</strong><span>votos nominais</span></li>
         <li><strong>{{ t.votes_sim }}</strong><span>votos "Sim"</span></li>
         <li><strong>{{ t.propositions_total }}</strong><span>proposições</span></li>
-        <li><strong>{{ t.attendance_present }}/{{ t.attendance_events }}</strong><span>presenças*</span></li>
         <li><strong>R$ {{ '%.2f'|format(t.expense_total) }}</strong><span>CEAP (líquido)</span></li>
       </ul>
-      <p class="note">*{{ t.attendance_note }}</p>
+
+      {# Frequência: cada régua com o substantivo da própria fonte. A Câmara publica
+         dias E sessões e os dois números não batem de propósito, então aparecem lado
+         a lado em vez de virarem um só. Nada é convertido de uma unidade para outra. #}
+      {% set freq = t.attendance %}
+      {% if freq.available %}
+        <h3>Frequência</h3>
+        {% for row in freq.rows %}
+          <ul class="stats">
+            <li>
+              <strong>{{ row.presenca }}/{{ row.total }}</strong>
+              <span>{{ row.unidade_label }} com presença{% if row.percentual_presenca is not none %}
+                ({{ '%.1f'|format(row.percentual_presenca) }}%){% endif %}</span>
+            </li>
+            {% if row.ausencia_nao_justificada is not none %}
+              <li>
+                <strong>{{ row.ausencia_nao_justificada }}</strong>
+                <span>{{ row.unidade_label }} de ausência não justificada</span>
+              </li>
+            {% endif %}
+            {% if row.ausencia_justificada is not none %}
+              <li>
+                <strong>{{ row.ausencia_justificada }}</strong>
+                <span>{{ row.unidade_label }} de ausência justificada</span>
+              </li>
+            {% endif %}
+            {% if row.ausencia_nao_classificada %}
+              {# A fonte registrou a ausência mas não disse de que tipo é. Somá-la a
+                 "não justificada" seria uma afirmação que ela não faz. #}
+              <li>
+                <strong>{{ row.ausencia_nao_classificada }}</strong>
+                <span>{{ row.unidade_label }} de ausência sem classificação</span>
+              </li>
+            {% endif %}
+          </ul>
+          <p class="note">
+            Denominador: {{ row.denominador }}{% if row.anos %} ·
+            {{ row.anos|join(', ') }}{% endif %}.
+          </p>
+        {% endfor %}
+        <p class="note">
+          Fonte: {{ freq.fonte }}{% if freq.derivada %} (medida <strong>derivada</strong>,
+          não publicada como tal pela Casa){% endif %}. {{ freq.note }}
+        </p>
+      {% else %}
+        <p class="no-source">
+          <strong>Sem frequência consolidada para este mandato.</strong><br>
+          A ficha só exibe presença quando a Casa publica — ou permite derivar — o
+          total de sessões esperadas. Sem esse denominador, qualquer percentual seria
+          calculado sobre o que nós coletamos, não sobre o que era devido.
+        </p>
+      {% endif %}
+
+      {% if t.leaves %}
+        <h3>Licenças e afastamentos</h3>
+        <ul class="stats">
+          <li><strong>{{ t.leaves.count }}</strong><span>licenças registradas</span></li>
+          <li><strong>{{ t.leaves.dias }}</strong><span>dias corridos de licença</span></li>
+        </ul>
+        {% if t.leaves.tipos %}
+          <p class="note">
+            Motivos publicados pela Casa:
+            {% for tipo in t.leaves.tipos %}{{ tipo.descricao }} ({{ tipo.count }}){% if not loop.last %}; {% endif %}{% endfor %}.
+          </p>
+        {% endif %}
+        <p class="note">
+          Licença é contada em dias corridos de calendário e <strong>não</strong> entra
+          na conta de presença acima, que é medida em sessões — somar as duas produziria
+          um número que nenhuma fonte publica.
+        </p>
+      {% endif %}
       {% if d.link.house_caveat %}
         <p class="no-source">
           <strong>Sobre os números desta Casa.</strong><br>

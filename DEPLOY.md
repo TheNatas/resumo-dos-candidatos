@@ -8,7 +8,8 @@ estar no caminho da requisição e passa para o caminho do build:
 
 ```
 hoje    visitante → FastAPI → SQL → HTML          (uma vez por visitante)
-deploy  cron      → SQL → arquivos HTML           (uma vez por dia)
+deploy  cron      → SQL → arquivos HTML           (dado novo: uma vez por dia)
+        push      → SQL → arquivos HTML           (código novo: em minutos)
                    visitante → arquivo
 ```
 
@@ -42,20 +43,40 @@ E o formato estático não é só o que sobrou; ele encaixa neste projeto:
 
 ## Arquitetura do build
 
+São **dois** workflows, separados pelo snapshot. Coletar leva ~3 h; renderizar leva
+segundos. Juntos num só, todo push esperava a coleta terminar para publicar.
+
 ```
-GitHub Actions (cron, ~05:00 BRT)
-  ├── restaura snapshot do banco ──► service container postgres:16
+collect.yml  (cron ~05:00 BRT · ~3 h · grupo de concorrência: coleta)
+  ├── baixa o snapshot ────────────► service container postgres:16
   │                                  (é superuser: CREATE EXTENSION funciona)
   ├── uv run resumo collect …        ← idempotente: no-op quando o hash não mudou
-  ├── uv run resumo resolve --year 2026
+  ├── publica o snapshot ──────────► release `snapshot` (assets sobrescritos)
+  └── chama deploy.yml ────────────┐
+                                   │
+deploy.yml   (push em main · ~3 min · grupo de concorrência: pages)  ◄──┘
+  ├── validate + test                ← nada é publicado sem a suíte passar
+  ├── baixa o snapshot ────────────► service container postgres:16
+  ├── uv run resumo db-upgrade       ← schema do commit, dado do último snapshot
+  ├── resolve → review apply → resolve
   ├── uv run resumo render ────────► _site/
-  ├── salva o snapshot
   └── actions/deploy-pages ────────► GitHub Pages (TLS grátis)
 ```
 
+Medido na execução `32180948770`: **172,3 min de coleta contra 0,7 min de todo o
+resto**. A separação tira essas ~3 h do caminho de um push — e some com o efeito
+colateral que a motivou, de um push ficar `pending` atrás de uma coleta em andamento e
+ser cancelado pelo push seguinte.
+
+Quem **escreve** o snapshot é só o `collect.yml`; o `deploy.yml` apenas lê. Um escritor
+só, nenhuma corrida. Em troca, um push publica contra o dado da última coleta, não
+contra dado fresco — que é a mesma promessa que o pipeline já fazia quando uma fonte
+está fora do ar: "sem dado novo hoje", não site fora do ar.
+
 Todo coletor é idempotente e **nenhuma fonte exige chave**. Se o snapshot for perdido,
 o backfill completo simplesmente roda de novo — bem dentro do limite de 6 h por job.
-O pipeline se recupera sozinho por construção.
+O pipeline se recupera sozinho por construção. O `deploy.yml`, esse, falha de propósito
+quando não há snapshot: melhor manter no ar o site anterior do que publicar vazio.
 
 ## Onde cada coisa vive
 
@@ -64,7 +85,7 @@ Tamanhos **medidos**, não estimados:
 | Artefato | Tamanho | Onde | Vai pro git? |
 |---|---|---|---|
 | Postgres | 196 MB | sua máquina (dev) + service container efêmero no CI | não |
-| Snapshot (`pg_dump -Fc`) | **23 MB** | cache do Actions (10 GB grátis, mantido quente pelo cron diário) | **não** |
+| Snapshot (`pg_dump -Fc`) | **23 MB** | assets da release `snapshot` (2 GB por arquivo, sem expiração) | **não** |
 | Site renderizado | **12 MB** | deployment do Pages | **não** |
 | Código + templates | 159 KB | o repositório | sim |
 
@@ -80,6 +101,14 @@ O site, medido em `resumo render` sobre os dados reais (658 fichas, 2,1 s):
 
 O que o visitante realmente baixa, com o gzip que o Pages aplica: **23 KB** na home —
 já com as 658 candidaturas dentro, sem nenhuma requisição extra — e **1,3 KB** por ficha.
+
+> **`foto/` ainda não está medido.** A tabela acima é anterior ao coletor de fotos.
+> Um JPEG `_div` do TSE tem ~15 KB, então 658 fichas devem somar **~10 MB** — o site
+> iria para ~22 MB e a entrada de cache para ~52 MB, contra tetos de 1 GB (Pages) e
+> 10 GB (Actions). É estimativa: rode `resumo collect tse-fotos && resumo render` e
+> troque por `du -sh _site/foto`. As fotos **não** entram no que o visitante baixa na
+> home — os cards usam `loading="lazy"`, então o navegador só busca as que aparecem
+> na tela.
 
 > **Nada é commitado.** O jeito antigo de publicar no Pages era empurrar HTML para uma
 > branch `gh-pages` — isso somaria ~8,5 MB de objetos git **por build**, ~3 GB de
@@ -109,7 +138,7 @@ um dump **sem CPF** — não o snapshot do pipeline.
         chave de API, então esse header é a única identificação do operador; coletar
         de IP do GitHub com contato falso é como se toma bloqueio de WAF
 - [x] **2. `uv run resumo render`** — mesmos templates e queries do app vivo
-  - [x] `_site/` completo: index, 658 fichas, JSON por candidato, PDFs, `404.html`,
+  - [x] `_site/` completo: index, 658 fichas, JSON por candidato, PDFs, fotos, `404.html`,
         `robots.txt`, `sitemap.xml`, `.nojekyll`
   - [x] busca client-side sem htmx: as 658 candidaturas já vêm na página e o filtro é
         um predicado no DOM — **funciona com JavaScript desligado** (lista tudo) e a
@@ -117,11 +146,18 @@ um dump **sem CPF** — não o snapshot do pipeline.
         substring do `ILIKE '%…%'` do servidor. Conferido: "silva" devolve 55 no
         filtro estático e 55 na API
   - [x] `--out` se recusa a apagar diretório que não foi ele que escreveu
-- [x] **3. Workflow do Actions** — [`.github/workflows/build-and-deploy.yml`](.github/workflows/build-and-deploy.yml)
+- [x] **3. Workflows do Actions** — [`collect.yml`](.github/workflows/collect.yml) (dado)
+      e [`deploy.yml`](.github/workflows/deploy.yml) (site)
   - [x] `validate` (arquivo de decisões + ruff) → `test` (suíte com Postgres) →
-        `build` → `deploy`: nada é publicado sem a suíte passar
-  - [x] snapshot restaurado/salvo no cache do Actions: **42 MB** por entrada
-        (23 MB de dump + 20 MB de PDFs), contra um limite de 10 GB
+        `render` → `deploy`: nada é publicado sem a suíte passar
+  - [x] snapshot em assets da release `snapshot`: **42 MB** por execução
+        (23 MB de dump + 20 MB de binários), contra um teto de 2 GB por arquivo.
+        Saiu do cache do Actions porque lá é LRU com teto de 10 GB e expira após
+        7 dias sem uso — e perder o snapshot passou a custar uma publicação falha,
+        não só uma execução mais lenta
+  - [x] só o `collect.yml` escreve o snapshot; o `deploy.yml` lê. Um escritor só
+  - [ ] **apagar a ponte de migração** em `collect.yml` (passo "Snapshot antigo no
+        cache do Actions") depois da primeira coleta publicar a release
   - [x] coletores em `continue-on-error`: fonte fora do ar é "sem dado novo hoje",
         não site fora do ar
   - [x] prefixo de URL vem do `actions/configure-pages`, então trocar para domínio

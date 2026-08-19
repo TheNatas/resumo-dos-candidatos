@@ -6,9 +6,10 @@ from __future__ import annotations
 import json
 
 import pytest
+from tests.helpers import TINY_JPEG
 
 from resumo.config import get_settings
-from resumo.db.models import Candidacy, GovernmentProposal
+from resumo.db.models import Candidacy, CandidatePhoto, GovernmentProposal
 from resumo.render import render_site
 
 
@@ -198,3 +199,95 @@ def test_publishes_the_caveats_page(session, tmp_path, _storage):
     assert "<loc>https://exemplo.org/sobre/</loc>" in (
         out / "sitemap.xml"
     ).read_text(encoding="utf-8")
+
+
+def _seed_photo(session, storage, sq="C1", data=TINY_JPEG) -> CandidatePhoto:
+    jpg = storage / "foto" / "2026" / f"{sq}_abc.jpg"
+    jpg.parent.mkdir(parents=True, exist_ok=True)
+    jpg.write_bytes(data)
+    photo = CandidatePhoto(
+        sq_candidato=sq, source="tse_bulk_foto", storage_path=str(jpg),
+        original_filename=f"FSC{sq}_div.jpg", media_type="image/jpeg", content_hash="abc",
+    )
+    session.add(photo)
+    session.commit()
+    return photo
+
+
+def test_photo_is_published_and_path_stays_private(session, tmp_path, _storage):
+    _seed(session)
+    _seed_photo(session, _storage)
+    out = tmp_path / "site"
+
+    result = render_site(session, out=out, base_url="", site_url=None)
+
+    assert result.photos == 1
+    assert (out / "foto" / "C1.jpg").read_bytes() == TINY_JPEG
+    detail = json.loads((out / "api" / "candidates" / "C1.json").read_text(encoding="utf-8"))
+    # The build-time hint must never survive into the published payload.
+    assert "_storage_path" not in detail["photo"]
+    assert "storage_path" not in detail["photo"]
+    assert detail["photo"]["url"] == "/foto/C1.jpg"
+    ficha = (out / "candidato" / "C1" / "index.html").read_text(encoding="utf-8")
+    assert 'src="/foto/C1.jpg"' in ficha
+    # Creditada onde o leitor a vê, não só no JSON.
+    assert "Foto oficial de registro" in ficha
+    # E o card na home aponta para o mesmo arquivo.
+    assert 'src="/foto/C1.jpg"' in (out / "index.html").read_text(encoding="utf-8")
+
+
+def test_photo_outside_storage_root_is_neither_copied_nor_linked(session, tmp_path, _storage):
+    """A row pointing outside the storage root must not pull an arbitrary file into a
+    public site — and, having refused to publish it, the build must not leave a URL
+    behind either: a broken frame where a face should be reads as a fact about the
+    candidate rather than about the build."""
+    _seed(session)
+    outside = tmp_path / "secret.jpg"
+    outside.write_bytes(b"segredo")
+    session.add(
+        CandidatePhoto(
+            sq_candidato="C1", source="tse_bulk_foto", storage_path=str(outside),
+            original_filename="secret.jpg", media_type="image/jpeg", content_hash="def",
+        )
+    )
+    session.commit()
+    out = tmp_path / "site"
+
+    result = render_site(session, out=out, base_url="", site_url=None)
+
+    assert result.photos == 0
+    assert not (out / "foto").exists()
+    detail = json.loads((out / "api" / "candidates" / "C1.json").read_text(encoding="utf-8"))
+    assert detail["photo"] is None
+    assert detail["candidacy"]["foto_url"] is None
+    index = json.loads((out / "api" / "candidates.json").read_text(encoding="utf-8"))
+    assert index[0]["foto_url"] is None
+    assert "/foto/C1.jpg" not in (out / "index.html").read_text(encoding="utf-8")
+
+
+def test_candidacy_without_a_photo_gets_initials_not_a_broken_image(session, tmp_path, _storage):
+    """TSE does not publish a photo for every candidacy. The page must say so with
+    initials — never with an image borrowed from anywhere else, and never with an
+    empty <img> that renders as a broken file icon under someone's name."""
+    _seed(session)
+    out = tmp_path / "site"
+
+    result = render_site(session, out=out, base_url="", site_url=None)
+
+    assert result.photos == 0
+    ficha = (out / "candidato" / "C1" / "index.html").read_text(encoding="utf-8")
+    assert "<img" not in ficha
+    assert "foto-vazia" in ficha and ">MS<" in ficha  # MARIA DA SILVA -> MS
+    assert "O TSE não publicou foto de registro" in ficha
+
+
+def test_photo_base_url_is_prefixed(session, tmp_path, _storage):
+    _seed(session)
+    _seed_photo(session, _storage)
+    out = tmp_path / "site"
+
+    render_site(session, out=out, base_url="/resumo-dos-candidatos", site_url=None)
+
+    ficha = (out / "candidato" / "C1" / "index.html").read_text(encoding="utf-8")
+    assert 'src="/resumo-dos-candidatos/foto/C1.jpg"' in ficha
+    assert 'src="/foto/' not in ficha

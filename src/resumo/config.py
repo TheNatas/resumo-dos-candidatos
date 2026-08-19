@@ -56,7 +56,20 @@ class Settings(BaseSettings):
     # ── Official source bases (no auth) ──────────────────────────────────────
     tse_cdn_base: str = "https://cdn.tse.jus.br/estatistica/sead/odsele"
     tse_ckan_base: str = "https://dadosabertos.tse.jus.br/api/3/action"
+    # Fotos são o único produto de candidatura publicado FORA de `odsele`, e o
+    # caminho já mudou entre ciclos — por isso é um template inteiro em
+    # configuração, não um `produto` passado ao construtor de URL. Se o TSE mover
+    # o arquivo de novo, é uma variável de ambiente, não um deploy de código.
+    tse_fotos_url_template: str = (
+        "https://cdn.tse.jus.br/estatistica/sead/eleicoes/eleicoes{ano}/fotos/"
+        "foto_cand{ano}_{uf}_div.zip"
+    )
     camara_api_base: str = "https://dadosabertos.camara.leg.br/api/v2"
+    # O portal institucional, separado da API porque é outro host e outro contrato.
+    # A frequência em plenário — a única fonte oficial que publica *dias faltados*
+    # já contados — só existe aqui, em HTML; `dadosabertos` não tem recurso de
+    # presença (só `/eventos/{id}/deputados`, que lista apenas os presentes).
+    camara_portal_base: str = "https://www.camara.leg.br"
     senado_api_base: str = "https://legis.senado.leg.br/dadosabertos"
 
     # ALESC (Assembleia Legislativa de SC) has no API; three distinct hosts back it.

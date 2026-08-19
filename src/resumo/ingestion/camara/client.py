@@ -1,7 +1,11 @@
-"""Câmara dos Deputados API v2 client.
+"""Câmara dos Deputados client — API v2 **and** the institutional portal.
 
 Handles the `{dados, links}` envelope, `rel=next` pagination, polite throttling and
 basic retry/backoff on 429/5xx. Sync httpx.
+
+Two hosts, one client: `dadosabertos.camara.leg.br` for the JSON API, and
+`camara.leg.br` for the pages the API does not cover — today only the relatório de
+presença em plenário, which is the sole official source of *dias faltados*.
 """
 
 from __future__ import annotations
@@ -25,7 +29,9 @@ _RETRYABLE = frozenset({429, 500, 502, 503, 504})
 
 class CamaraClient:
     def __init__(self, client: httpx.Client | None = None, max_retries: int = 4):
-        self._base = get_settings().camara_api_base.rstrip("/")
+        settings = get_settings()
+        self._base = settings.camara_api_base.rstrip("/")
+        self._portal = settings.camara_portal_base.rstrip("/")
         self._client = client or make_client(headers={"Accept": "application/json"})
         self._owns = client is None
         self._max_retries = max_retries
@@ -40,12 +46,14 @@ class CamaraClient:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    def _request(self, url: str, params: dict | None = None) -> dict[str, Any]:
+    def _fetch(
+        self, url: str, params: dict | None = None, headers: dict[str, str] | None = None
+    ) -> httpx.Response:
         for attempt in range(self._max_retries):
             try:
-                resp = self._client.get(url, params=params)
+                resp = self._client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
-                return resp.json()
+                return resp
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else "?"
                 # Só status transitório merece nova tentativa. Um 404/400 é resposta
@@ -60,7 +68,22 @@ class CamaraClient:
 
     def get(self, path: str, params: dict | None = None) -> dict[str, Any]:
         url = path if path.startswith("http") else f"{self._base}/{path.lstrip('/')}"
-        return self._request(url, params)
+        return self._fetch(url, params).json()
+
+    def get_portal_html(self, path: str, params: dict | None = None) -> str:
+        """GET a page from ``camara.leg.br`` (the institutional portal) as HTML.
+
+        Separate from :meth:`get` because it is a different host with a different
+        contract: the portal is server-rendered HTML and answers **500** — not 404 —
+        for a deputy id that does not exist. It is here, on the same client, so the
+        portal inherits the API's retry/backoff and the project's User-Agent instead
+        of growing a second transport.
+
+        Needed because ``dadosabertos`` publishes no frequency resource at all; the
+        official attendance report exists only on the portal.
+        """
+        url = path if path.startswith("http") else f"{self._portal}/{path.lstrip('/')}"
+        return self._fetch(url, params, {"Accept": "text/html"}).text
 
     def paginate(self, path: str, params: dict | None = None) -> Iterator[dict[str, Any]]:
         """Yield every item in `dados` across all pages (following rel=next)."""

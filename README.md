@@ -3,6 +3,7 @@
 Plataforma pública de transparência eleitoral para as **Eleições Gerais 2026 em Santa
 Catarina**. Para cada candidato, agrega:
 
+- **Foto oficial de registro** da candidatura (a mesma do DivulgaCandContas).
 - **Propostas** da candidatura (*proposta de governo* oficial do TSE, quando o cargo exige).
 - **Bens declarados** e **financiamento de campanha** (receitas, despesas, doadores).
 - **Histórico de atuação pública** (votos, proposições, presença, gastos de gabinete,
@@ -43,6 +44,7 @@ Ampliar é trocar variáveis de ambiente: `RESUMO_TARGET_UFS=""` roda nacional,
 | Fonte | O que traz | Auth |
 |---|---|---|
 | **TSE — CDN/CKAN** (`consulta_cand`, `bem_candidato`, `proposta_governo`) | candidaturas, bens, propostas | — |
+| **TSE — `foto_cand`** | fotos oficiais de registro | — |
 | **TSE — `prestacao_contas`** | receitas, despesas contratadas, pagamentos, doadores originários | — |
 | **Câmara dos Deputados API v2** | mandatos, votações, proposições, presença, CEAP | — |
 | **Senado Federal — dados abertos** | mandatos, votações, proposições, CEAPS | — |
@@ -83,6 +85,15 @@ programa e ação, que a API não devolve).
   entregue por duas candidaturas da mesma eleição não é específico de nenhuma delas —
   a ficha marca esses casos como *Documento do partido* (quando todas as candidaturas
   são do mesmo partido) ou *Documento compartilhado*, **antes** do link.
+- **A foto é a do registro, não a da campanha.** É a imagem entregue à Justiça
+  Eleitoral no pedido de registro — a mesma que o DivulgaCandContas exibe —, e costuma
+  ser bem menos favorecedora que a do material de campanha; a ficha diz isso ao lado
+  dela. Quando o TSE não publica foto para uma candidatura, a página mostra as
+  iniciais: **nenhuma imagem vem de outra fonte**, nem de redes sociais nem da
+  imprensa. As fotos são o **único produto de candidatura publicado fora de
+  `odsele`** (ficam em `eleicoes/eleicoes<ano>/fotos/`), e esse caminho já mudou entre
+  ciclos — por isso a URL inteira é configuração (`RESUMO_TSE_FOTOS_URL_TEMPLATE`),
+  com o catálogo CKAN consultado antes do template.
 - **Presença é derivada**, não publicada: na Câmara vem de listas de eventos, no Senado
   dos códigos de comparecimento das votações. Sempre rotulada como derivada.
 
@@ -126,10 +137,11 @@ uv run resumo scope                 # confirme o escopo antes de coletar
 ```
 
 ```bash
-# 1. TSE — candidaturas, bens, propostas, contas de campanha
+# 1. TSE — candidaturas, bens, fotos, propostas, contas de campanha
 uv run resumo collect tse-candidates
 uv run resumo collect tse-assets
 uv run resumo collect tse-proposta          # sem --uf: usa as UFs do escopo
+uv run resumo collect tse-fotos             # idem — um pacote por UF
 uv run resumo collect tse-contas            # vazio até set/2026 — ver calendário
 
 # 2. Mandatos SEMPRE primeiro: os demais coletores só guardam linhas de quem
@@ -162,7 +174,7 @@ uv run resumo resolve --year 2026
 uv run resumo serve                 # http://127.0.0.1:8000
 
 # 7. Ou renderize o site estático (mesmos templates e queries, executados no build)
-uv run resumo render --out _site    # 658 fichas + JSON + PDFs em ~2 s
+uv run resumo render --out _site    # 658 fichas + JSON + PDFs + fotos em ~2 s
 ```
 
 O deploy é estático e gratuito (GitHub Pages + Actions) — o banco sai do caminho da
@@ -182,12 +194,13 @@ publicado: [DEPLOY.md](DEPLOY.md).
 
 ## Calendário dos dados (2026)
 
-Registro fechou em **15/08/2026**, então candidaturas, bens e propostas **já existem**.
+Registro fechou em **15/08/2026**, então candidaturas, bens, fotos e propostas **já
+existem**.
 Prestação de contas **não**:
 
 | Dado | Disponível |
 |---|---|
-| Candidaturas, bens, propostas de governo | ✅ agora (arquivo regenerado diariamente ~04:00 BRT) |
+| Candidaturas, bens, fotos, propostas de governo | ✅ agora (arquivo regenerado diariamente ~04:00 BRT) |
 | Relatórios financeiros (72 h por recurso) | 🟡 desde 20/07, volume mínimo |
 | **Prestação parcial** | 🔴 entrega 9–13/09, publicação ~13–15/09/2026 |
 | **Contas finais** (1º turno) | 🔴 até 03/11/2026 |
@@ -201,6 +214,7 @@ O coletor de contas trata arquivo vazio como resultado normal (`empty`), não co
 ## Modelo de dados
 
 `Person` · `Candidacy` · `Mandate` · **`CandidateMandateLink`** · `GovernmentProposal` ·
+`CandidatePhoto` ·
 `Vote` · `Proposition` · `AttendanceRecord` · `Expense` · `CandidateAsset` · `Coalition` ·
 `CampaignRevenue` · `CampaignRevenueOriginator` · `CampaignExpense` · `CampaignPayment` ·
 `BudgetAmendment` · `AmendmentAuthorLink` · `ReviewQueue` · `RawIngestion`.

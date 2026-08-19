@@ -16,7 +16,7 @@ from resumo.api import queries
 from resumo.api.deps import get_session
 from resumo.api.routers import candidates
 from resumo.config import get_settings
-from resumo.db.models import GovernmentProposal
+from resumo.db.models import CandidatePhoto, GovernmentProposal
 
 _WEB = Path(__file__).resolve().parent.parent / "web"
 templates = Jinja2Templates(directory=str(_WEB / "templates"))
@@ -136,6 +136,26 @@ def candidate_page(
     if detail is None:
         return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
     return templates.TemplateResponse(request, "candidate.html", {"d": detail})
+
+
+@app.get("/foto/{sq_candidato}.jpg")
+def candidate_photo(sq_candidato: str, session: Session = Depends(get_session)):
+    """Serve a candidacy's official registration photo.
+
+    The URL says `.jpg` because that is what TSE ships and what the page asks for;
+    the response's media type comes from the stored row, so a bundle that ever
+    contains a PNG is served correctly instead of being labelled a lie.
+    """
+    photo = session.get(CandidatePhoto, sq_candidato)
+    if photo is None or not photo.storage_path:
+        raise HTTPException(status_code=404, detail="foto não encontrada")
+    path = Path(photo.storage_path).resolve()
+    root = get_settings().storage_path().resolve()
+    # Same confinement as the proposta route: the path is a filesystem path read out
+    # of a database row, and no row may turn this into an arbitrary-file read.
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="arquivo indisponível")
+    return FileResponse(path, media_type=photo.media_type)
 
 
 @app.get("/proposta/{proposal_id}.pdf")

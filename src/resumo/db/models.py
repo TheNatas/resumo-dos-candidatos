@@ -57,6 +57,29 @@ class House(str, enum.Enum):
         }[self]
 
 
+class AttendanceUnit(str, enum.Enum):
+    """The ruler a source counts attendance in — and therefore the one we display.
+
+    Não é escolha nossa: a Câmara publica *dias com sessão deliberativa*, a ALESC
+    publica *sessões plenárias*, e o Senado só permite contar as *sessões* em que
+    houve votação nominal. Converter um no outro exigiria inventar o que a fonte não
+    diz (duas sessões no mesmo dia não são dois dias; um dia sem votação nominal não
+    é uma sessão ausente), então cada resumo carrega a unidade em que foi publicado e
+    a ficha usa esse substantivo — "dias" ou "sessões" — em vez de um número mudo.
+    """
+
+    SESSAO = "SESSAO"
+    DIA = "DIA"
+
+    @property
+    def label(self) -> str:
+        return {AttendanceUnit.SESSAO: "sessões", AttendanceUnit.DIA: "dias"}[self]
+
+    @property
+    def label_singular(self) -> str:
+        return {AttendanceUnit.SESSAO: "sessão", AttendanceUnit.DIA: "dia"}[self]
+
+
 class MatchMethod(str, enum.Enum):
     cpf_exact = "cpf_exact"
     # CPF recuperado do histórico do próprio TSE para Casas que não o publicam
@@ -169,6 +192,7 @@ class Candidacy(Base):
     coalition: Mapped[Coalition | None] = relationship(back_populates="candidacies")
     assets: Mapped[list[CandidateAsset]] = relationship(back_populates="candidacy")
     proposals: Mapped[list[GovernmentProposal]] = relationship(back_populates="candidacy")
+    photo: Mapped[CandidatePhoto | None] = relationship(back_populates="candidacy")
     links: Mapped[list[CandidateMandateLink]] = relationship(back_populates="candidacy")
 
 
@@ -223,6 +247,34 @@ class GovernmentProposal(Base):
     candidacy: Mapped[Candidacy] = relationship(back_populates="proposals")
 
 
+class CandidatePhoto(Base):
+    """The registration photo the candidate filed with the Justiça Eleitoral.
+    Source of truth: TSE per-UF `foto_cand<ano>_<UF>_div.zip`.
+
+    Keyed on `sq_candidato` alone — unlike a proposta, of which a candidacy can
+    legitimately file several, a candidacy has exactly ONE official photo. A second
+    row would force the page to choose which face to show, and a re-issued photo
+    must REPLACE the old one rather than sit beside it, so the natural key is the
+    candidacy and re-ingesting is an update in place.
+    """
+
+    __tablename__ = "candidate_photo"
+
+    sq_candidato: Mapped[str] = mapped_column(
+        ForeignKey("candidacy.sq_candidato"), primary_key=True
+    )
+    source: Mapped[str] = mapped_column(String(32))  # tse_bulk_foto
+    storage_path: Mapped[str | None] = mapped_column(String(512))
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    # Served straight to a browser, so the type is stored rather than guessed from
+    # the extension at request time.
+    media_type: Mapped[str] = mapped_column(String(32), default="image/jpeg")
+    content_hash: Mapped[str] = mapped_column(String(64))
+    fetched_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    candidacy: Mapped[Candidacy] = relationship(back_populates="photo")
+
+
 # ── Legislative side ─────────────────────────────────────────────────────────
 class Mandate(Base):
     """A held legislative term (the 'exercício'). Source of truth: Câmara
@@ -249,6 +301,8 @@ class Mandate(Base):
     votes: Mapped[list[Vote]] = relationship(back_populates="mandate")
     propositions: Mapped[list[Proposition]] = relationship(back_populates="mandate")
     attendance: Mapped[list[AttendanceRecord]] = relationship(back_populates="mandate")
+    attendance_summaries: Mapped[list[AttendanceSummary]] = relationship(back_populates="mandate")
+    leaves: Mapped[list[MandateLeave]] = relationship(back_populates="mandate")
     expenses: Mapped[list[Expense]] = relationship(back_populates="mandate")
     amendments: Mapped[list[BudgetAmendment]] = relationship(back_populates="mandate")
     links: Mapped[list[CandidateMandateLink]] = relationship(back_populates="mandate")
@@ -311,6 +365,84 @@ class AttendanceRecord(Base):
     derivation: Mapped[str | None] = mapped_column(String(64))
 
     mandate: Mapped[Mandate | None] = relationship(back_populates="attendance")
+
+
+class AttendanceSummary(Base):
+    """Frequência consolidada de um mandato, **na unidade em que a fonte publica**.
+
+    :class:`AttendanceRecord` tem grão de evento e não responde "quantos dias faltou":
+    o denominador ali é *o que foi coletado*, não *o que era esperado*. Esta tabela
+    guarda o consolidado com o universo esperado junto — e uma linha por
+    :class:`AttendanceUnit`, porque uma fonte pode publicar as duas réguas:
+
+    * **Câmara** (``camara_ato_mesa_191_2017``) — o relatório de presença em plenário
+      publica as duas: sessões deliberativas com Ordem do Dia iniciada, e dias com
+      sessão. Duas linhas, e elas **não batem de propósito** (um deputado ausente na
+      extraordinária nº 277 e presente na nº 278 conta como *dia* presente).
+    * **Senado** (``senado_sessao_votacao_nominal``) — derivada: só sessões em que
+      houve votação nominal, porque não existe lista de presença publicada.
+    * **ALESC** (``alesc_sessao_plenaria``) — sessões plenárias, presença observada.
+
+    `total` é o denominador tal como a fonte o define, sempre **restrito ao período de
+    exercício do parlamentar** quando a fonte assim o faz — por isso ele varia entre
+    parlamentares no mesmo ano, e por isso a ficha mostra percentual e não só o
+    absoluto.
+    """
+
+    __tablename__ = "attendance_summary"
+    __table_args__ = (UniqueConstraint("mandate_id", "ano", "ambito", "unidade"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    mandate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("mandate.id"), index=True)
+    house: Mapped[House] = mapped_column(Enum(House), index=True)
+    house_member_id: Mapped[str] = mapped_column(String(32), index=True)
+    ano: Mapped[int] = mapped_column(Integer, index=True)
+    # "plenario" hoje; "comissao" quando/se as reuniões de comissão forem coletadas.
+    ambito: Mapped[str] = mapped_column(String(16), default="plenario")
+    unidade: Mapped[AttendanceUnit] = mapped_column(Enum(AttendanceUnit))
+
+    total: Mapped[int | None] = mapped_column(Integer)
+    presenca: Mapped[int | None] = mapped_column(Integer)
+    # Separadas só quando a fonte separa. A Câmara separa; a ALESC rotula *toda*
+    # ausência como justificada sem publicar o motivo; o Senado só sabe distinguir
+    # pelos códigos de licença/missão. `ausencia_nao_classificada` existe para a
+    # ausência que a fonte registra sem dizer de que tipo é — somá-la a qualquer um
+    # dos dois lados seria uma afirmação que a fonte não faz.
+    ausencia_justificada: Mapped[int | None] = mapped_column(Integer)
+    ausencia_nao_justificada: Mapped[int | None] = mapped_column(Integer)
+    ausencia_nao_classificada: Mapped[int | None] = mapped_column(Integer)
+
+    metrica: Mapped[str] = mapped_column(String(64), index=True)
+    derivation: Mapped[str | None] = mapped_column(String(64))
+    source_url: Mapped[str | None] = mapped_column(String(1024))
+
+    mandate: Mapped[Mandate | None] = relationship(back_populates="attendance_summaries")
+
+
+class MandateLeave(Base):
+    """Licença/afastamento formal, em datas — a única ausência que o Senado publica
+    como *dias corridos*. Source of truth: ``/senador/{codigo}/licencas``.
+
+    Não entra na conta de presença: uma licença explica por que o parlamentar não
+    estava lá, e a régua dela (dias corridos de calendário) não é a mesma das sessões.
+    Fica ao lado, com o motivo que a própria Casa publicou.
+    """
+
+    __tablename__ = "mandate_leave"
+    __table_args__ = (UniqueConstraint("mandate_id", "leave_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    mandate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("mandate.id"), index=True)
+    house: Mapped[House] = mapped_column(Enum(House), default=House.SENADO)
+    house_member_id: Mapped[str] = mapped_column(String(32), index=True)
+    # Id da licença na fonte (`Licenca/Codigo`), para a chave natural do upsert.
+    leave_id: Mapped[str] = mapped_column(String(32))
+    data_inicio: Mapped[dt.date | None] = mapped_column(Date)
+    data_fim: Mapped[dt.date | None] = mapped_column(Date)
+    sigla_tipo: Mapped[str | None] = mapped_column(String(64))
+    descricao_tipo: Mapped[str | None] = mapped_column(String(255))
+
+    mandate: Mapped[Mandate | None] = relationship(back_populates="leaves")
 
 
 class Expense(Base):

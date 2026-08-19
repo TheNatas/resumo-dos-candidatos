@@ -63,6 +63,28 @@ def make_proposta_zip(pdf_name: str, content: bytes = b"%PDF-1.4 fake") -> bytes
     return buf.getvalue()
 
 
+# 1x1 JPEG. Real bytes rather than b"fake": the collector hashes what it stores and
+# the renderer copies it verbatim, so a test that never handles a real image would
+# not notice either one mangling the file.
+TINY_JPEG = bytes.fromhex(
+    "ffd8ffe000104a46494600010100000100010000ffdb004300ffffffffffffffffffffffffff"
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "ffffffffffffffffffffffffffffffffffffc2000b080001000101011100ffc4001400010000"
+    "0000000000000000000000000000ffda0008010100000001d2cf20ffd9"
+)
+
+
+def make_foto_zip(members: dict[str, bytes] | None = None, **named: bytes) -> bytes:
+    """A foto_cand-style zip: image members keyed by path, no manifest."""
+    entries = dict(members or {})
+    entries.update(named)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
 def deputado_detail(member_id: str, cpf: str, nome: str, **status) -> dict:
     s = {
         "nomeEleitoral": nome.split()[0],

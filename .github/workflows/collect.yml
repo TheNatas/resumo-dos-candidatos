@@ -1,17 +1,23 @@
-# Coleta → resolve → renderiza → publica. Runner público (minutos ilimitados em
+# Coleta das fontes públicas → snapshot. Runner público (minutos ilimitados em
 # repositório público) e NENHUM segredo: nenhuma fonte exige chave de API.
 #
+# É o caminho LENTO do projeto (~3 h, quase tudo em rede) e por isso vive separado
+# de `deploy.yml`: dado novo chega uma vez por dia, código muda muitas vezes por dia,
+# e prender a publicação de um push atrás da coleta custava horas por mudança.
+#
 # O banco não mora no repositório. Ele vive aqui como service container efêmero,
-# restaurado a cada execução a partir de um snapshot no cache do Actions. Se o
-# snapshot sumir, o backfill completo roda de novo: os coletores são idempotentes e
-# todas as fontes são públicas, então o pipeline se recupera sozinho.
-name: build-and-deploy
+# restaurado a cada execução a partir do snapshot publicado na release `snapshot`.
+# Se o snapshot sumir, o backfill completo roda de novo: os coletores são
+# idempotentes e todas as fontes são públicas, então o pipeline se recupera sozinho.
+#
+# Este workflow é o ÚNICO que escreve o snapshot. O `deploy.yml` só lê. Um escritor
+# só, nenhuma corrida: dois workflows gravando sob chaves diferentes podiam fazer
+# uma publicação regravar por cima de dado mais fresco que a coleta acabara de subir.
+name: collect
 
 on:
   schedule:
     - cron: "0 8 * * *" # 05:00 BRT — o TSE regenera os arquivos por volta das 04:00
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       full_backfill:
@@ -20,58 +26,23 @@ on:
         default: false
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write # publica o snapshot como asset da release
   issues: write # abre/atualiza o aviso quando um coletor falha
 
-# Uma publicação por vez, sem cancelar a que já está coletando.
+# Uma coleta por vez, sem cancelar a que já está rodando — são ~3 h de rede que não
+# se recuperam. Grupo próprio, separado do `pages`: a publicação não espera por isto.
 concurrency:
-  group: pages
+  group: coleta
   cancel-in-progress: false
 
 env:
   RESUMO_DATABASE_URL: postgresql+psycopg://resumo:resumo@localhost:5432/resumo
   RESUMO_STORAGE_DIR: ./data/storage
   SNAPSHOT_DIR: .snapshot
+  SNAPSHOT_TAG: snapshot
 
 jobs:
-  # Falha em segundos quando o arquivo de decisões está quebrado, sem subir banco.
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - run: uv sync --extra dev
-      - run: uv run resumo review validate
-      - run: uv run ruff check src tests
-
-  test:
-    runs-on: ubuntu-latest
-    services:
-      db:
-        image: postgres:16
-        env:
-          POSTGRES_USER: resumo
-          POSTGRES_PASSWORD: resumo
-          POSTGRES_DB: resumo
-        # 5439 é a porta que o conftest espera (a mesma do docker-compose local).
-        ports: ["5439:5432"]
-        options: >-
-          --health-cmd "pg_isready -U resumo -d resumo"
-          --health-interval 5s --health-timeout 5s --health-retries 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - run: uv sync --extra dev
-      - run: uv run pytest -q
-
-  build:
-    needs: [validate, test]
+  coleta:
     runs-on: ubuntu-latest
     timeout-minutes: 330 # o teto do job é 6 h; o backfill frio cabe com folga
     services:
@@ -99,17 +70,36 @@ jobs:
           enable-cache: true
       - run: uv sync
 
-      # Descobre sob qual URL o site será servido: subpath do projeto, ou raiz se
-      # houver domínio próprio. É daqui que sai o prefixo dos links internos.
-      - uses: actions/configure-pages@v6
-        id: pages
-
-      # O snapshot carrega o banco E os PDFs. Os dois juntos, de propósito: o ledger
-      # RawIngestion trata artefato inalterado como no-op, então um banco restaurado
-      # sem os PDFs no disco nunca os rebaixaria — as propostas sumiriam do site.
-      - name: Restaura o snapshot
+      # O snapshot carrega o banco E os arquivos binários (PDFs das propostas, JPEGs
+      # das fotos). Os dois juntos, de propósito: o ledger RawIngestion trata
+      # artefato inalterado como no-op, então um banco restaurado sem os arquivos no
+      # disco nunca os rebaixaria — propostas e fotos sumiriam do site.
+      #
+      # Ausência de snapshot não é erro aqui (é a primeira execução, ou um
+      # full_backfill pedido na mão): os coletores reconstroem tudo do zero.
+      - name: Baixa o snapshot
         id: snapshot
         if: ${{ !inputs.full_backfill }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$SNAPSHOT_DIR"
+          if gh release download "$SNAPSHOT_TAG" --dir "$SNAPSHOT_DIR" --clobber; then
+            echo "encontrado=sim" >> "$GITHUB_OUTPUT"
+            du -sh "$SNAPSHOT_DIR"/*
+          else
+            echo "encontrado=nao" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sem snapshot anterior — esta execução faz o backfill completo."
+          fi
+
+      # TRANSITÓRIO — pode ser apagado depois da primeira coleta bem-sucedida.
+      # O snapshot morava no cache do Actions até a migração para a release. Sem
+      # esta ponte, a primeira execução não acharia release nenhuma e refaria o
+      # backfill completo (3-6 h) tendo o dado de ontem ali do lado.
+      - name: Snapshot antigo no cache do Actions (ponte de migração)
+        id: cache_legado
+        if: ${{ !inputs.full_backfill && steps.snapshot.outputs.encontrado == 'nao' }}
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.SNAPSHOT_DIR }}
@@ -117,14 +107,14 @@ jobs:
           restore-keys: snapshot-
 
       - name: Carrega o snapshot no Postgres
-        if: steps.snapshot.outputs.cache-matched-key != ''
+        if: ${{ steps.snapshot.outputs.encontrado == 'sim' || steps.cache_legado.outputs.cache-matched-key != '' }}
         run: |
           set -euo pipefail
           docker run --rm --network host -v "$PWD/$SNAPSHOT_DIR:/s" postgres:16 \
             pg_restore --no-owner --clean --if-exists \
               -d "postgresql://resumo:resumo@localhost:5432/resumo" /s/resumo.dump
           tar -xzf "$SNAPSHOT_DIR/storage.tar.gz" -C .
-          echo "PDFs restaurados: $(du -sh "$RESUMO_STORAGE_DIR" 2>/dev/null | cut -f1 || echo 0)"
+          echo "arquivos restaurados: $(du -sh "$RESUMO_STORAGE_DIR" 2>/dev/null | cut -f1 || echo 0)"
 
       - name: Migrações
         run: uv run resumo db-upgrade
@@ -154,6 +144,7 @@ jobs:
           coletar uv run resumo collect tse-candidates
           coletar uv run resumo collect tse-assets
           coletar uv run resumo collect tse-proposta
+          coletar uv run resumo collect tse-fotos
           coletar uv run resumo collect tse-contas
 
           # Backfill das eleições passadas. A ponte de CPF (cpf_via_tse) recupera a
@@ -252,32 +243,15 @@ jobs:
             gh issue close "$num"
           fi
 
-      # A fila é SAÍDA do resolve e as decisões são ENTRADA dele: num banco recém
-      # construído a fila só existe depois da primeira passada. Então resolve roda,
-      # as decisões versionadas são aplicadas, e resolve roda de novo já com elas.
-      - name: Resolve → aplica decisões versionadas → resolve
-        run: |
-          uv run resumo resolve --year 2026
-          uv run resumo review apply
-          uv run resumo resolve --year 2026
-
-      - name: Renderiza o site
-        run: |
-          uv run resumo render \
-            --out _site \
-            --base-url "${{ steps.pages.outputs.base_path }}" \
-            --site-url "${{ steps.pages.outputs.base_url }}"
-          du -sh --apparent-size _site
-          # Se a renderização saiu vazia, algo está errado a montante: melhor falhar
-          # e manter no ar o site anterior do que publicar uma página em branco.
-          python3 - <<'PY'
-          import json, sys
-          n = len(json.load(open("_site/api/candidates.json")))
-          print(f"{n} candidaturas renderizadas")
-          sys.exit(0 if n else "render vazio — publicação abortada")
-          PY
-
-      - name: Salva o snapshot
+      # O snapshot é o único elo entre a coleta e a publicação, então ele mora numa
+      # release, não no cache do Actions: o cache é LRU com teto de 10 GB por
+      # repositório e expira sozinho após 7 dias sem uso, e perder o snapshot passou
+      # a custar uma republicação falha, não só uma execução mais lenta. Asset de
+      # release não expira e aguenta 2 GB por arquivo — folga larga sobre os ~9 MB
+      # de hoje, e espaço para os JPEGs das fotos crescerem.
+      - name: Publica o snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "$SNAPSHOT_DIR" "$RESUMO_STORAGE_DIR"
@@ -285,23 +259,22 @@ jobs:
             pg_dump -Fc -Z6 -d "postgresql://resumo:resumo@localhost:5432/resumo" -f /s/resumo.dump
           tar -czf "$SNAPSHOT_DIR/storage.tar.gz" "$RESUMO_STORAGE_DIR"
           du -sh "$SNAPSHOT_DIR"/*
-      # Chave de cache é imutável: cada execução grava uma entrada nova e o LRU do
-      # GitHub descarta as velhas. `restore-keys: snapshot-` pega sempre a mais recente.
-      - uses: actions/cache/save@v6
-        with:
-          path: ${{ env.SNAPSHOT_DIR }}
-          key: snapshot-${{ github.run_id }}
 
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: _site
+          # A release é um ponteiro fixo, sempre sobrescrito: não versionamos
+          # snapshots, o mais recente é o único que interessa.
+          gh release view "$SNAPSHOT_TAG" >/dev/null 2>&1 || \
+            gh release create "$SNAPSHOT_TAG" --target "$GITHUB_SHA" \
+              --title "Snapshot dos dados coletados" --prerelease \
+              --notes "Banco (pg_dump -Fc) e arquivos binários da última coleta. Sobrescrito a cada execução do workflow \`collect\`. Não é um release de software."
+          gh release upload "$SNAPSHOT_TAG" \
+            "$SNAPSHOT_DIR/resumo.dump" "$SNAPSHOT_DIR/storage.tar.gz" --clobber
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        uses: actions/deploy-pages@v5
+  # Dado novo só vale quando está no ar. Reaproveita o `deploy.yml` inteiro em vez
+  # de duplicar render e publicação — uma cópia só do caminho que gera o site.
+  publica:
+    needs: coleta
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy.yml

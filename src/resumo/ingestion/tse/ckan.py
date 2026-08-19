@@ -23,6 +23,17 @@ def cdn_url(produto: str, ano: int, uf: str | None = None) -> str:
     return f"{base}/{produto}/{stem}.zip"
 
 
+def fotos_url(ano: int, uf: str) -> str:
+    """Templated URL for one UF's candidate-photo bundle.
+
+    Not `cdn_url`: the photos are published under `eleicoes/eleicoes<ano>/fotos/`
+    rather than the `odsele/<produto>/` layout every other bulk product uses, so
+    they get their own configurable template instead of a fourth special case
+    inside a builder whose whole job is that one stable layout.
+    """
+    return get_settings().tse_fotos_url_template.format(ano=ano, uf=uf.upper())
+
+
 def resolve_resource_url(
     package_id: str, name_contains: str, *, fallback: str | None = None
 ) -> str:
