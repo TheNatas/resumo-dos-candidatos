@@ -487,6 +487,26 @@ def render(
     typer.echo(str(result))
 
 
+@app.command("janela")
+def janela(
+    house: str = typer.Option(..., "--house", help="CAMARA | SENADO | ASSEMBLEIA."),
+    dias: int = typer.Option(30, "--dias", help="Dias de sobreposição."),
+    piso: Optional[str] = typer.Option(None, "--piso", help="Data mínima (ISO)."),
+) -> None:
+    """Imprime de onde recomeçar a coleta de votações (janela incremental)."""
+    from resumo.db.models import House
+    from resumo.window import incremental_start
+
+    try:
+        casa = House(house.strip().upper())
+    except ValueError as exc:
+        raise typer.BadParameter(f"house inválida: {house!r}") from exc
+
+    chao = piso or f"{get_settings().election_year}-01-01"
+    with session_scope() as session:
+        typer.echo(incremental_start(session, casa, floor=chao, overlap_days=dias))
+
+
 @app.command("serve")
 def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
     import uvicorn

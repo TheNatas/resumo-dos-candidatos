@@ -156,22 +156,53 @@ jobs:
           coletar uv run resumo collect tse-proposta
           coletar uv run resumo collect tse-contas
 
+          # Backfill das eleições passadas. A ponte de CPF (cpf_via_tse) recupera a
+          # identidade de quem exerce mandato a partir do arquivo do TSE da eleição
+          # em que a pessoa se elegeu — e sem esses anos em base ela não tem a que
+          # ligar: a CI nasceu só com 2026, e por isso a ponte ficava inerte aqui
+          # enquanto funcionava na máquina local. Idempotente: o ledger transforma
+          # as execuções seguintes em no-op.
+          for ano in 2018 2022; do
+            coletar env RESUMO_ELECTION_YEAR=$ano uv run resumo collect tse-candidates
+          done
+
           # Mandatos sempre antes do histórico: os demais coletores só guardam linhas
           # de quem já tem mandato em base.
           coletar uv run resumo collect camara-deputados
           coletar uv run resumo collect senado-senadores
           coletar uv run resumo collect alesc-deputados
 
+          # Votação antiga não muda, mas o coletor refazia o ano inteiro toda
+          # execução: ~6.900 votações da Câmara mais duas chamadas cada, ~3 h de
+          # rede por dia para reaprender fato imutável. A janela agora parte do que
+          # já está em base, POR CASA — a ALESC publica em ritmo diferente da
+          # Câmara, e um máximo global faria a Casa mais lenta ser pulada pelo
+          # avanço da mais rápida. Sobreposição para não perder votação publicada
+          # com atraso; banco vazio continua pedindo o ano inteiro.
+          # Se a consulta falhar, a janela volta a ser o ano inteiro: coletar demais
+          # é desperdício, coletar de menos é buraco silencioso no histórico.
+          janela() {
+            d="$(uv run resumo janela --house "$1" 2>/dev/null)"
+            case "$d" in
+              [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) echo "$d" ;;
+              *) echo "${RESUMO_ELECTION_YEAR:-2026}-01-01" ;;
+            esac
+          }
+          DE_CAMARA="$(janela CAMARA)"
+          DE_SENADO="$(janela SENADO)"
+          DE_ALESC="$(janela ASSEMBLEIA)"
+          echo "janelas — câmara: $DE_CAMARA · senado: $DE_SENADO · alesc: $DE_ALESC"
+
           coletar uv run resumo collect camara-despesas    --anos "$ANOS"
           coletar uv run resumo collect camara-proposicoes
-          coletar uv run resumo collect camara-votacoes    --inicio 2026-01-01 --fim "$HOJE"
-          coletar uv run resumo collect camara-eventos     --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect camara-votacoes    --inicio "$DE_CAMARA" --fim "$HOJE"
+          coletar uv run resumo collect camara-eventos     --inicio "$DE_CAMARA" --fim "$HOJE"
           coletar uv run resumo collect senado-despesas    --anos "$ANOS"
           coletar uv run resumo collect senado-proposicoes
-          coletar uv run resumo collect senado-votacoes    --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect senado-votacoes    --inicio "$DE_SENADO" --fim "$HOJE"
           coletar uv run resumo collect alesc-despesas     --anos 2025,2026
-          coletar uv run resumo collect alesc-votacoes     --inicio 2026-01-01 --fim "$HOJE"
-          coletar uv run resumo collect alesc-presenca     --inicio 2026-01-01 --fim "$HOJE"
+          coletar uv run resumo collect alesc-votacoes     --inicio "$DE_ALESC" --fim "$HOJE"
+          coletar uv run resumo collect alesc-presenca     --inicio "$DE_ALESC" --fim "$HOJE"
           coletar uv run resumo collect alesc-proposicoes  --anos 2026
 
           coletar uv run resumo collect emendas

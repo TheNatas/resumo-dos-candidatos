@@ -162,6 +162,18 @@ ar (a `/despesas` da Câmara devolveu vazio para todos os deputados em 18/08/202
 no-op — o snapshot preserva o que já havia. Isso só dói no backfill frio, quando não
 existe snapshot para preservar.
 
+**A ponte precisa das eleições passadas — e a CI nascia sem elas.** A ponte de CPF
+recupera a identidade de quem exerce mandato no arquivo do TSE da eleição em que a
+pessoa se elegeu. A CI foi construída do zero coletando só 2026, então a ponte ficava
+**inerte em produção** (60 vínculos, 85 na fila) enquanto funcionava na máquina local
+(69 e 10) — um teste que só passa onde não importa. O workflow passou a coletar 2018
+e 2022 uma vez; o ledger torna as execuções seguintes no-op.
+
+**Janela incremental.** Votação antiga não muda, mas o coletor refazia o ano inteiro
+toda execução: ~6.900 votações da Câmara mais duas chamadas cada, ~3 h de rede por
+dia para reaprender fato imutável. A janela agora parte do que já está em base, por
+Casa e com sobreposição — banco vazio ainda pede o ano inteiro.
+
 **Render vazio aborta a publicação.** Se `api/candidates.json` sai com zero
 candidaturas, o build falha e o site anterior continua no ar. Melhor manter dado de
 ontem que publicar página em branco.
