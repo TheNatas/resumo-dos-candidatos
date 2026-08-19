@@ -24,6 +24,7 @@ from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from resumo.config import get_settings
 from resumo.db.models import House, Mandate
 from resumo.util import normalize_name
 
@@ -95,6 +96,11 @@ class MandateRef:
     slug: str
     mandate_id: uuid.UUID | None
     nome: str | None
+    # Nomes civis conhecidos do mesmo deputado. O portal da transparência publica o
+    # nome civil ("CARLOS HENRIQUE DE LIMA") e o e-Legis o parlamentar ("Sargento
+    # Lima"): sem essa ponte, o gasto fica sem dono. O nome civil vem do arquivo do
+    # próprio TSE, não de palpite.
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass
@@ -110,7 +116,7 @@ class MandateIndex:
 
     def __post_init__(self) -> None:
         for ref in self.refs:
-            for raw in (ref.nome, slug_to_name(ref.slug)):
+            for raw in (ref.nome, slug_to_name(ref.slug), *ref.aliases):
                 for variant in name_variants(raw):
                     existing = self._exact.get(variant)
                     if existing is not None and existing.slug != ref.slug:
@@ -208,9 +214,33 @@ def mandate_map(session: Session, id_legislatura: int) -> dict[str, uuid.UUID]:
 
 
 def mandate_index(session: Session, id_legislatura: int) -> MandateIndex:
-    rows = session.execute(
-        select(Mandate.house_member_id, Mandate.id, Mandate.nome_parlamentar).where(
-            Mandate.house == House.ASSEMBLEIA, Mandate.id_legislatura == id_legislatura
+    """Índice de nomes -> mandato, incluindo o nome civil que o TSE publica.
+
+    A ALESC fala de si mesma com dois vocabulários: o e-Legis usa o nome
+    parlamentar, o portal da transparência usa o nome civil. O arquivo do TSE
+    conhece os dois para quem se elegeu, então é ele que costura um ao outro — em
+    vez de deixar o gasto sem dono ou, pior, atribuí-lo por semelhança.
+    """
+    from resumo.resolution.bridge import recover_cpfs
+
+    rows = list(
+        session.execute(
+            select(Mandate.house_member_id, Mandate.id, Mandate.nome_parlamentar).where(
+                Mandate.house == House.ASSEMBLEIA, Mandate.id_legislatura == id_legislatura
+            )
         )
     )
-    return MandateIndex([MandateRef(slug, mid, nome) for slug, mid, nome in rows])
+    # Falha de ponte não pode derrubar a coleta de despesas: sem alias, o índice
+    # volta a ser exatamente o de antes.
+    try:
+        bridged = recover_cpfs(session, before_year=get_settings().election_year)
+    except Exception:  # noqa: BLE001
+        logger.warning("mandate_index: ponte de identidade indisponível; seguindo sem aliases")
+        bridged = {}
+
+    refs = []
+    for slug, mid, nome in rows:
+        ident = bridged.get(str(mid))
+        aliases = (ident.source_nome,) if ident and ident.source_nome else ()
+        refs.append(MandateRef(slug, mid, nome, aliases))
+    return MandateIndex(refs)

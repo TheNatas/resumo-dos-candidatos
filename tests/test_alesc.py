@@ -538,3 +538,56 @@ def test_max_pages_none_means_unbounded(respx_mock):
     )
     with AlescClient() as client:
         assert list(sessoes.iter_sessions(client, max_pages=None)) == []
+
+
+# ── Atribuição de despesa pelo nome civil que o TSE publica ──────────────────
+def test_mandate_index_learns_the_civil_name_from_the_tse(session):
+    """A ALESC fala de si com dois vocabulários: o e-Legis usa o nome parlamentar
+    ("Sargento Lima") e o portal da transparência o nome civil ("CARLOS HENRIQUE DE
+    LIMA"). Sem costurar os dois, o gasto fica sem dono — e atribuí-lo por
+    semelhança poria o gasto de um deputado na ficha de outro."""
+    from resumo.db.models import Candidacy, House, Mandate
+    from resumo.ingestion.alesc.common import mandate_index
+
+    mandate = Mandate(
+        house=House.ASSEMBLEIA, house_member_id="sargento-lima", id_legislatura=20,
+        sigla_uf="SC", nome_parlamentar="Sargento Lima",
+    )
+    session.add(mandate)
+    session.add(
+        Candidacy(
+            sq_candidato="P22", ano_eleicao=2022, sg_uf="SC", cd_cargo=7,
+            ds_cargo="DEPUTADO ESTADUAL", nome_candidato="CARLOS HENRIQUE DE LIMA",
+            nome_urna="Sargento Lima", nome_normalizado="CARLOS HENRIQUE DE LIMA",
+            cpf_raw="12345678909", ds_sit_tot_turno="ELEITO POR QP",
+        )
+    )
+    session.commit()
+
+    index = mandate_index(session, 20)
+
+    hit = index.match("CARLOS HENRIQUE DE LIMA")
+    assert hit is not None and hit.mandate_id == mandate.id
+    # E o nome parlamentar continua resolvendo, claro.
+    assert index.match("Sargento Lima").mandate_id == mandate.id
+
+
+def test_mandate_index_still_works_without_a_bridge(session):
+    """Sem candidatura anterior correspondente não há alias, e o índice volta a ser
+    exatamente o de antes — a ponte só acrescenta, nunca substitui."""
+    from resumo.db.models import House, Mandate
+    from resumo.ingestion.alesc.common import mandate_index
+
+    session.add(
+        Mandate(
+            house=House.ASSEMBLEIA, house_member_id="fulano", id_legislatura=20,
+            sigla_uf="SC", nome_parlamentar="Fulano de Tal",
+        )
+    )
+    session.commit()
+
+    index = mandate_index(session, 20)
+
+    assert index.refs[0].aliases == ()
+    assert index.match("Fulano de Tal") is not None
+    assert index.match("NOME CIVIL DESCONHECIDO") is None
