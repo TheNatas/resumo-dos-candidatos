@@ -6,18 +6,30 @@
   <div class="filters">
     <input type="search" name="q" placeholder="Nome do candidato…" value="{{ q }}"
            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="keyup changed delay:300ms, search"
-           hx-include="[name='uf'],[name='cargo']" autofocus>
+           hx-include="[name='cargo'],[name='partido'],[name='reeleicao']" autofocus>
     <select name="cargo" class="cargo"
             hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
-            hx-include="[name='q'],[name='uf']">
+            hx-include="[name='q'],[name='partido'],[name='reeleicao']">
       <option value="">Todos os cargos</option>
       {% for value, label in cargo_options %}
         <option value="{{ value }}" {% if cargo == value %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
-    <input type="text" name="uf" placeholder="UF" maxlength="2" value="{{ uf }}"
-           hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="keyup changed delay:300ms"
-           hx-include="[name='q'],[name='cargo']" class="uf">
+    <select name="partido" class="partido"
+            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
+            hx-include="[name='q'],[name='cargo'],[name='reeleicao']">
+      <option value="">Todos os partidos</option>
+      {% for sigla in partido_options %}
+        <option value="{{ sigla }}" {% if partido == sigla %}selected{% endif %}>{{ sigla }}</option>
+      {% endfor %}
+    </select>
+    <select name="reeleicao" class="reeleicao"
+            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
+            hx-include="[name='q'],[name='cargo'],[name='partido']">
+      <option value="">Reeleição: todas</option>
+      <option value="sim" {% if reeleicao == 'sim' %}selected{% endif %}>Reeleição confirmada</option>
+      <option value="nao" {% if reeleicao == 'nao' %}selected{% endif %}>Sem reeleição confirmada</option>
+    </select>
   </div>
 </section>
 <section id="results">

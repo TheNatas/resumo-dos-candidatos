@@ -11,7 +11,17 @@
         <option value="{{ value }}">{{ label }}</option>
       {% endfor %}
     </select>
-    <input type="text" id="uf" name="uf" placeholder="UF" maxlength="2" class="uf">
+    <select id="partido" name="partido" class="partido">
+      <option value="">Todos os partidos</option>
+      {% for sigla in partido_options %}
+        <option value="{{ sigla }}">{{ sigla }}</option>
+      {% endfor %}
+    </select>
+    <select id="reeleicao" name="reeleicao" class="reeleicao">
+      <option value="">Reeleição: todas</option>
+      <option value="sim">Reeleição confirmada</option>
+      <option value="nao">Sem reeleição confirmada</option>
+    </select>
   </div>
   <p class="note" id="count">{{ total }} candidaturas</p>
 </section>
@@ -32,7 +42,8 @@
   };
   var q = document.getElementById("q");
   var cargo = document.getElementById("cargo");
-  var uf = document.getElementById("uf");
+  var partido = document.getElementById("partido");
+  var reeleicao = document.getElementById("reeleicao");
   var empty = document.getElementById("empty");
   var count = document.getElementById("count");
   var cards = Array.prototype.slice.call(document.querySelectorAll("#results .card"));
@@ -40,13 +51,15 @@
   function apply() {
     var nq = norm(q.value);
     var nc = cargo.value;
-    var nu = uf.value.trim().toUpperCase();
+    var np = partido.value;
+    var nr = reeleicao.value;
     var shown = 0;
     for (var i = 0; i < cards.length; i++) {
       var card = cards[i];
       var ok = (!nq || card.dataset.norm.indexOf(nq) !== -1)
             && (!nc || card.dataset.cargo.indexOf(nc) !== -1)
-            && (!nu || card.dataset.uf === nu);
+            && (!np || card.dataset.partido === np)
+            && (!nr || card.dataset.reeleicao === nr);
       card.hidden = !ok;
       if (ok) shown++;
     }
@@ -54,7 +67,7 @@
     count.textContent = shown === 1 ? "1 candidatura" : shown + " candidaturas";
   }
 
-  [q, cargo, uf].forEach(function (el) { el.addEventListener("input", apply); });
+  [q, cargo, partido, reeleicao].forEach(function (el) { el.addEventListener("input", apply); });
   apply();
 })();
 </script>

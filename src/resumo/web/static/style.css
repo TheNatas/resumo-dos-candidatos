@@ -12,14 +12,17 @@ h1 { font-size:1.6rem; margin:.2rem 0; }
 .filters { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
 .filters input[type=search] { flex:1; min-width:240px; }
 input, select { padding:.6rem .75rem; border:1px solid var(--line); border-radius:8px; font-size:1rem; background:#fff; color:inherit; }
-input.uf { width:80px; text-transform:uppercase; }
 select.cargo { max-width:230px; }
+select.partido { max-width:180px; }
+select.reeleicao { max-width:220px; }
 .cards { list-style:none; padding:0; margin:1.25rem 0; display:grid; gap:.6rem; }
 .card a { display:block; padding:.8rem 1rem; background:#fff; border:1px solid var(--line); border-radius:10px; text-decoration:none; color:inherit; }
 .card a:hover { border-color:var(--accent); }
 .card .meta { display:block; color:var(--muted); font-size:.85rem; margin-top:.15rem; }
 .badge { display:inline-block; margin-top:.35rem; margin-right:.3rem; font-size:.7rem; background:#eef4ff; color:var(--accent); padding:.1rem .5rem; border-radius:999px; }
 .badge-muted { background:#f2f4f7; color:var(--muted); }
+/* Ressalva sobre o documento, não sobre a pessoa — mesmo tom de '.unconfirmed'. */
+.badge-warn { background:#fffaeb; color:#b54708; }
 .empty, .muted { color:var(--muted); }
 .back { color:var(--accent); text-decoration:none; font-size:.9rem; }
 .ficha { background:#fff; border:1px solid var(--line); border-radius:12px; padding:1.5rem; margin-top:1rem; }
@@ -39,6 +42,8 @@ section h2 { font-size:1.05rem; margin:1.5rem 0 .5rem; }
 .stats span { color:var(--muted); font-size:.72rem; }
 .note { color:var(--muted); font-size:.75rem; }
 .proposals { list-style:none; padding:0; }
+.proposals li { margin-bottom:.5rem; }
+.proposals .note { margin:.15rem 0 0; }
 section h3 { font-size:.85rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:1.2rem 0 .5rem; }
 .donors { list-style:none; padding:0; margin:0; }
 .donors li { display:flex; justify-content:space-between; gap:1rem; padding:.45rem .6rem; border-bottom:1px solid var(--line); font-size:.9rem; }

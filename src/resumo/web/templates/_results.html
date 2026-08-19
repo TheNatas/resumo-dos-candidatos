@@ -2,7 +2,8 @@
 <ul class="cards">
   {% for c in results %}
   <li class="card" data-norm="{{ c.nome_normalizado or '' }}{{ ' ' }}{{ (c.nome_urna or '')|upper }}"
-      data-cargo="{{ c.cargo or '' }}" data-uf="{{ c.uf or '' }}">
+      data-cargo="{{ c.cargo or '' }}" data-partido="{{ c.partido or '' }}"
+      data-reeleicao="{{ 'sim' if c.incumbent_confirmed else 'nao' }}">
     <a href="{{ base_url }}/candidato/{{ c.sq_candidato }}">
       <strong>{{ c.nome_urna or c.nome }}</strong>
       <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
@@ -16,7 +17,7 @@
   </li>
   {% endfor %}
 </ul>
-{% elif q or uf or cargo %}
+{% elif q or cargo or partido or reeleicao %}
 <p class="empty">Nenhuma candidatura encontrada.</p>
 {% else %}
 <p class="empty">Digite um nome ou escolha um cargo para começar.</p>

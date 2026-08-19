@@ -77,6 +77,12 @@ programa e ação, que a API não devolve).
 - **Emendas — não existe "valor autorizado" na fonte.** O empenhado é o melhor
   indicador disponível e é rotulado como tal. Só emendas **individuais** são
   atribuíveis a um parlamentar (bancada, comissão e relator são coletivas).
+- **Proposta de governo — nem todo PDF é da candidatura.** O zip do TSE só diz sob
+  qual candidato o arquivo foi entregue, nunca se o texto é o programa do partido. O
+  que dá para derivar sem ler o PDF é a repetição: o **mesmo arquivo** (hash idêntico)
+  entregue por duas candidaturas da mesma eleição não é específico de nenhuma delas —
+  a ficha marca esses casos como *Documento do partido* (quando todas as candidaturas
+  são do mesmo partido) ou *Documento compartilhado*, **antes** do link.
 - **Presença é derivada**, não publicada: na Câmara vem de listas de eventos, no Senado
   dos códigos de comparecimento das votações. Sempre rotulada como derivada.
 

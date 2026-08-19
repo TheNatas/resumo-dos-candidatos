@@ -25,6 +25,11 @@ templates = Jinja2Templates(directory=str(_WEB / "templates"))
 templates.env.globals["base_url"] = get_settings().site_base_url
 templates.env.globals["election_year"] = get_settings().election_year
 
+# The filter is a <select>, so "no choice" arrives as an empty string — a
+# `bool | None` query param would 422 on it. Parsed here instead, which also keeps
+# the URL readable ("?reeleicao=sim") for a link someone may share.
+_REELEICAO = {"sim": True, "nao": False}
+
 app = FastAPI(title="Resumo dos Candidatos", version="0.1.0")
 app.include_router(candidates.router)
 app.mount("/static", StaticFiles(directory=str(_WEB / "static")), name="static")
@@ -68,8 +73,9 @@ def scope() -> dict:
 def index(
     request: Request,
     q: str | None = None,
-    uf: str | None = None,
     cargo: str | None = None,
+    partido: str | None = None,
+    reeleicao: str | None = None,
     session: Session = Depends(get_session),
 ):
     scope_info = _scope()
@@ -77,15 +83,16 @@ def index(
         queries.search_candidacies(
             session,
             q=q,
-            uf=uf,
             cargo=cargo,
+            partido=partido,
+            reeleicao=_REELEICAO.get((reeleicao or "").lower()),
             # Pinned to the configured year: the same database also holds the
             # historical validation set (2022), and an unscoped search lists those
             # rows — with their "ELEITO" badges — under an "Eleições 2026" header.
             year=scope_info["election_year"],
             limit=50,
         )
-        if (q or uf or cargo)
+        if (q or cargo or partido or reeleicao)
         else []
     )
     scope_label = _scope_label(scope_info)
@@ -96,9 +103,16 @@ def index(
         {
             "results": results,
             "q": q or "",
-            "uf": uf or "",
             "cargo": cargo or "",
+            "partido": partido or "",
+            "reeleicao": reeleicao or "",
             "cargo_options": [(c["nome"], c["nome"].title()) for c in scope_info["cargos"]],
+            "partido_options": queries.partidos_in_scope(
+                session,
+                year=scope_info["election_year"],
+                ufs=scope_info["ufs"],
+                cargo_codes=[c["cd_cargo"] for c in scope_info["cargos"]],
+            ),
             "scope_label": scope_label,
         },
     )

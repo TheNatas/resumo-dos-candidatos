@@ -22,7 +22,11 @@
       <ul class="proposals">
         {% for p in d.proposals %}
           <li>📄 <a href="{{ base_url }}{{ p.url }}">{{ p.filename or 'Proposta de governo' }}</a>
-              <em>({{ p.source }})</em></li>
+              {%- if p.scope_label %} <span class="badge badge-warn">{{ p.scope_label }}</span>{% endif %}
+              <em>({{ p.source }})</em>
+              {# Dito ANTES do clique: o leitor precisa saber que o PDF não é
+                 específico da candidatura sem ter de abri-lo para descobrir. #}
+              {% if p.scope_note %}<p class="note">{{ p.scope_note }}</p>{% endif %}</li>
         {% endfor %}
       </ul>
     {% elif c.requires_proposta %}

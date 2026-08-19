@@ -42,6 +42,21 @@ from resumo.db.models import (
 
 ACCEPTED_TIERS = (ConfidenceTier.auto_strong, ConfidenceTier.auto_weak)
 
+# The same gate `candidate_detail` applies, as a correlated predicate so a listing
+# can carry (and filter on) incumbency without a query per row. It is one-directional
+# evidence: True means a confirmed incumbent seeking re-election, False means only
+# that no accepted link says so — an unresolved or in-review candidacy lands there too.
+_CONFIRMED_REELECTION = (
+    select(1)
+    .select_from(CandidateMandateLink)
+    .where(
+        CandidateMandateLink.sq_candidato == Candidacy.sq_candidato,
+        CandidateMandateLink.is_incumbent_reelection.is_(True),
+        CandidateMandateLink.confidence_tier.in_(ACCEPTED_TIERS),
+    )
+    .exists()
+)
+
 
 def search_candidacies(
     session: Session,
@@ -49,10 +64,12 @@ def search_candidacies(
     q: str | None = None,
     uf: str | None = None,
     cargo: str | None = None,
+    partido: str | None = None,
+    reeleicao: bool | None = None,
     year: int | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    stmt = select(Candidacy)
+    stmt = select(Candidacy, _CONFIRMED_REELECTION.label("incumbent"))
     if q:
         # Accent-insensitive substring match on the normalized name (trgm index).
         stmt = stmt.where(Candidacy.nome_normalizado.ilike(f"%{_norm(q)}%"))
@@ -60,10 +77,19 @@ def search_candidacies(
         stmt = stmt.where(Candidacy.sg_uf == uf.upper())
     if cargo:
         stmt = stmt.where(Candidacy.ds_cargo.ilike(f"%{cargo}%"))
+    if partido:
+        # Exact sigla, not a substring: "PP" inside "PPS"/"PSDB" would silently widen
+        # a filter the reader chose precisely.
+        stmt = stmt.where(Candidacy.sg_partido == partido.upper())
+    if reeleicao is not None:
+        stmt = stmt.where(_CONFIRMED_REELECTION if reeleicao else ~_CONFIRMED_REELECTION)
     if year:
         stmt = stmt.where(Candidacy.ano_eleicao == year)
     stmt = stmt.order_by(Candidacy.nome_candidato).limit(limit)
-    return [_candidacy_summary(c) for c in session.execute(stmt).scalars()]
+    return [
+        _candidacy_summary(c, incumbent_confirmed=incumbent)
+        for c, incumbent in session.execute(stmt)
+    ]
 
 
 def candidacies_in_scope(
@@ -79,13 +105,40 @@ def candidacies_in_scope(
     `search_candidacies` with a big limit: which pages get published is an explicit
     scoped query, never whatever a search box happened to ask for.
     """
-    stmt = select(Candidacy).where(Candidacy.ano_eleicao == year)
+    stmt = select(Candidacy, _CONFIRMED_REELECTION.label("incumbent")).where(
+        Candidacy.ano_eleicao == year
+    )
     if ufs:
         stmt = stmt.where(Candidacy.sg_uf.in_([u.upper() for u in ufs]))
     if cargo_codes:
         stmt = stmt.where(Candidacy.cd_cargo.in_(list(cargo_codes)))
     stmt = stmt.order_by(Candidacy.nome_candidato, Candidacy.sq_candidato)
-    return [_candidacy_summary(c) for c in session.execute(stmt).scalars()]
+    return [
+        _candidacy_summary(c, incumbent_confirmed=incumbent)
+        for c, incumbent in session.execute(stmt)
+    ]
+
+
+def partidos_in_scope(
+    session: Session,
+    *,
+    year: int,
+    ufs: Sequence[str] = (),
+    cargo_codes: Sequence[int] = (),
+) -> list[str]:
+    """Party siglas that actually have a candidacy in scope, sorted.
+
+    The filter's options come from the data, never from a fixed party list: a party
+    with nobody to show would be an option that only ever empties the page.
+    """
+    stmt = select(Candidacy.sg_partido).where(
+        Candidacy.ano_eleicao == year, Candidacy.sg_partido.is_not(None)
+    )
+    if ufs:
+        stmt = stmt.where(Candidacy.sg_uf.in_([u.upper() for u in ufs]))
+    if cargo_codes:
+        stmt = stmt.where(Candidacy.cd_cargo.in_(list(cargo_codes)))
+    return sorted({p.strip() for p in session.execute(stmt.distinct()).scalars() if p.strip()})
 
 
 def get_candidacy(session: Session, sq: str) -> Candidacy | None:
@@ -98,6 +151,86 @@ def get_proposals(session: Session, sq: str) -> list[GovernmentProposal]:
             select(GovernmentProposal).where(GovernmentProposal.sq_candidato == sq)
         ).scalars()
     )
+
+
+# ── Proposta: de quem é o documento ──────────────────────────────────────────
+# Nothing in the TSE bulk data says "this PDF is the party's program rather than this
+# candidate's": the per-UF zip only maps a file to a candidate. But the *same* file —
+# byte-identical, same content hash — filed under two different candidacies cannot be
+# specific to either one. That much is derived, not guessed, and it is worth saying
+# before the reader clicks: a program written for the party reads very differently
+# from one written for this candidacy.
+_SCOPE_LABELS = {"party": "Documento do partido", "shared": "Documento compartilhado"}
+
+
+def shared_proposal_scopes(
+    session: Session, proposals: Sequence[GovernmentProposal], *, ano_eleicao: int | None
+) -> dict[str, dict]:
+    """Map content_hash -> sharing info, for the hashes more than one candidacy filed.
+
+    A hash filed by a single candidacy is simply absent (the common case), so the
+    caller reads "not in this dict" as "specific to this candidacy".
+
+    Scoped to one election year on purpose: a candidate who re-files the same platform
+    four years later is a *different* sq_candidato, and counting that as sharing would
+    flag their own document as somebody else's.
+    """
+    hashes = {p.content_hash for p in proposals if p.content_hash}
+    if not hashes:
+        return {}
+
+    stmt = (
+        select(GovernmentProposal.content_hash, Candidacy.sq_candidato, Candidacy.sg_partido)
+        .join(Candidacy, GovernmentProposal.sq_candidato == Candidacy.sq_candidato)
+        .where(GovernmentProposal.content_hash.in_(hashes))
+        .distinct()
+    )
+    if ano_eleicao is not None:
+        stmt = stmt.where(Candidacy.ano_eleicao == ano_eleicao)
+
+    holders: dict[str, dict[str, str | None]] = {}
+    for content_hash, sq, partido in session.execute(stmt):
+        holders.setdefault(content_hash, {})[sq] = partido
+
+    scopes: dict[str, dict] = {}
+    for content_hash, by_sq in holders.items():
+        if len(by_sq) < 2:
+            continue
+        partidos = sorted({p for p in by_sq.values() if p})
+        # One party behind every candidacy that filed it -> it is that party's
+        # document. More than one -> still not this candidate's, but calling it a
+        # coligação would be an inference the data does not carry, so it is reported
+        # only as shared.
+        scopes[content_hash] = {
+            "scope": "party" if len(partidos) == 1 else "shared",
+            "shared_with": len(by_sq) - 1,
+            "partidos": partidos,
+        }
+    return scopes
+
+
+def _proposal_scope_payload(info: dict | None) -> dict:
+    """The reader-facing half of `shared_proposal_scopes`. States what was observed —
+    the same file under N candidacies — and stops there: a shared PDF is a fact about
+    the document, never a judgement about the candidate."""
+    if info is None:
+        return {"scope": "candidacy", "scope_label": None, "scope_note": None, "shared_with": 0}
+    if info["scope"] == "party":
+        de_quem = f" do {info['partidos'][0]}"
+    elif info["partidos"]:
+        de_quem = f" ({', '.join(info['partidos'])})"
+    else:
+        de_quem = ""
+    total = info["shared_with"] + 1
+    return {
+        "scope": info["scope"],
+        "scope_label": _SCOPE_LABELS[info["scope"]],
+        "scope_note": (
+            f"O mesmo arquivo foi apresentado por {total} candidaturas{de_quem} nesta "
+            "eleição — o conteúdo não é específico desta candidatura."
+        ),
+        "shared_with": info["shared_with"],
+    }
 
 
 def get_accepted_link(session: Session, sq: str) -> tuple[CandidateMandateLink, Mandate] | None:
@@ -287,8 +420,12 @@ def candidate_detail(
         }
         track = track_record_summary(session, mandate.id)
         amendments = amendments_summary(session, mandate.id)
+    proposals = get_proposals(session, sq)
+    # Which of these PDFs are shared with other candidacies — resolved once for the
+    # whole list rather than per row.
+    scopes = shared_proposal_scopes(session, proposals, ano_eleicao=cand.ano_eleicao)
     return {
-        "candidacy": _candidacy_summary(cand),
+        "candidacy": _candidacy_summary(cand, incumbent_confirmed=accepted is not None),
         "proposals": [
             # `storage_path` is a server filesystem path and must not leave the
             # process: it leaks the deploy's directory layout and gives a reader
@@ -300,12 +437,16 @@ def candidate_detail(
                 "source": p.source,
                 "filename": p.original_filename,
                 "url": f"/proposta/{p.id}.pdf",
+                # Whose document this is, when the same file turns up under more than
+                # one candidacy — flagged next to the link so the reader knows before
+                # opening it.
+                **_proposal_scope_payload(scopes.get(p.content_hash)),
                 # Build-time only: the static renderer needs to find the file on disk
                 # to copy it. Underscored and opt-in so it can never reach the public
                 # payload by default.
                 **({"_storage_path": p.storage_path} if include_storage_path else {}),
             }
-            for p in get_proposals(session, sq)
+            for p in proposals
         ],
         "incumbent_confirmed": accepted is not None,
         "link": link_info,
@@ -317,7 +458,7 @@ def candidate_detail(
     }
 
 
-def _candidacy_summary(c: Candidacy) -> dict:
+def _candidacy_summary(c: Candidacy, *, incumbent_confirmed: bool) -> dict:
     return {
         "sq_candidato": c.sq_candidato,
         "nome": c.nome_candidato,
@@ -329,6 +470,8 @@ def _candidacy_summary(c: Candidacy) -> dict:
         "uf": c.sg_uf,
         "partido": c.sg_partido,
         "situacao": c.ds_situacao_candidatura,
+        # Gated exactly like the ficha's track record: never a guessed link.
+        "incumbent_confirmed": bool(incumbent_confirmed),
         "resultado": c.ds_sit_tot_turno,
         "majoritario": c.is_majoritario,
         # Derived, not stored: "majoritário" and "files a proposta de governo" are

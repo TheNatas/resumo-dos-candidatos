@@ -98,6 +98,64 @@ def test_html_pages_render(session):
     assert "Incumbência não confirmada" in client.get("/candidato/C2").text
 
 
+def test_page_filters_by_partido(session):
+    _seed_incumbent(session)
+    # Out of scope (other election year): its sigla must not reach the filter.
+    session.add(
+        Candidacy(
+            sq_candidato="OLD9", ano_eleicao=2022, sg_uf="SC", cd_cargo=6,
+            ds_cargo="DEPUTADO FEDERAL", nome_candidato="PEDRO ANTIGO",
+            nome_normalizado="PEDRO ANTIGO", sg_partido="PSOL",
+        )
+    )
+    session.commit()
+
+    page = client.get("/").text
+    assert '<option value="PT"' in page
+    assert '<option value="PSDB"' in page
+    assert '<option value="PSOL"' not in page
+
+    filtered = client.get("/", params={"partido": "PT"}).text
+    assert "JOSE" in filtered
+    assert "ANA PEREIRA" not in filtered
+
+
+def test_api_filters_by_partido(session):
+    _seed_incumbent(session)
+    # Lowercase in, exact sigla out: the sigla is normalized, never substring-matched.
+    listed = client.get("/api/candidates", params={"partido": "pt"}).json()
+    assert [c["sq_candidato"] for c in listed] == ["C1"]
+
+
+def test_filters_by_reeleicao(session):
+    _seed_incumbent(session)
+    # A review-tier link is exactly what must NOT count as a confirmed re-election.
+    session.add(
+        CandidateMandateLink(
+            sq_candidato="C2", mandate_id=session.query(Mandate).one().id,
+            person_id=session.query(Person).one().id,
+            match_method=MatchMethod.probabilistic, confidence_score=0.5,
+            confidence_tier=ConfidenceTier.review, is_incumbent_reelection=True,
+            pipeline_version="test",
+        )
+    )
+    session.commit()
+
+    confirmed = client.get("/api/candidates", params={"reeleicao": "true"}).json()
+    assert [c["sq_candidato"] for c in confirmed] == ["C1"]
+    assert confirmed[0]["incumbent_confirmed"] is True
+
+    rest = client.get("/api/candidates", params={"reeleicao": "false"}).json()
+    assert [c["sq_candidato"] for c in rest] == ["C2"]
+    assert rest[0]["incumbent_confirmed"] is False
+
+    page = client.get("/", params={"reeleicao": "sim"}).text
+    assert "JOSE" in page
+    assert "ANA PEREIRA" not in page
+    # An empty select submits an empty string; it must read as "no filter", not 422.
+    assert client.get("/", params={"reeleicao": ""}).status_code == 200
+
+
 def _seed_other_year(session):
     """A row from the historical validation set. The same database holds ~29k of
     these; the public surface must not list them under the current election."""
@@ -195,3 +253,76 @@ def test_about_page_is_served_live_too(session):
     assert "votação simbólica" in resp.text
     # O rodapé aponta com barra final; o app redireciona em vez de 404.
     assert client.get("/sobre/", follow_redirects=True).status_code == 200
+
+
+def _majoritario(sq: str, nome: str, *, partido: str, uf: str = "SC", ano: int = 2026) -> Candidacy:
+    return Candidacy(
+        sq_candidato=sq, ano_eleicao=ano, sg_uf=uf, cd_cargo=3, ds_cargo="GOVERNADOR",
+        nome_candidato=nome, nome_urna=nome, nome_normalizado=nome, sg_partido=partido,
+        is_majoritario=True,
+    )
+
+
+def _proposal(sq: str, filename: str, content_hash: str) -> GovernmentProposal:
+    return GovernmentProposal(
+        sq_candidato=sq, source="tse_bulk_pdf", storage_path=None,
+        original_filename=filename, content_hash=content_hash,
+    )
+
+
+def test_proposal_filed_by_several_candidacies_is_flagged_as_the_party_s(session):
+    """The TSE zip only says which candidate a PDF was filed under — never whether the
+    text is the party's program. The same file under two candidacies is the one signal
+    that survives without reading it, and the reader gets it before the click."""
+    session.add_all(
+        [
+            _majoritario("P1", "ANA", partido="PT"),
+            _majoritario("P2", "BRUNO", partido="PT", uf="PR"),
+            # Same person re-filing the same platform four years earlier: a different
+            # sq_candidato, but nobody is sharing anything with anybody.
+            _majoritario("P0", "ANA", partido="PT", ano=2022),
+        ]
+    )
+    session.add_all(
+        [
+            _proposal("P1", "programa-pt.pdf", "shared"),
+            _proposal("P2", "programa-pt.pdf", "shared"),
+            _proposal("P0", "programa-pt.pdf", "shared"),
+            _proposal("P1", "plano-ana.pdf", "own"),
+        ]
+    )
+    session.commit()
+
+    detail = client.get("/api/candidates/P1").json()
+    by_name = {p["filename"]: p for p in detail["proposals"]}
+
+    party = by_name["programa-pt.pdf"]
+    assert party["scope"] == "party"
+    assert party["scope_label"] == "Documento do partido"
+    assert party["shared_with"] == 1  # the 2022 filing is not counted
+    assert "2 candidaturas do PT" in party["scope_note"]
+
+    own = by_name["plano-ana.pdf"]
+    assert own["scope"] == "candidacy"
+    assert own["scope_label"] is None and own["scope_note"] is None
+
+    # The flag is on the ficha, next to the link, not only in the JSON.
+    page = client.get("/candidato/P1").text
+    assert "Documento do partido" in page
+
+
+def test_proposal_shared_across_parties_is_not_called_the_party_s(session):
+    """Two parties behind the same file means it is not this candidate's — but calling
+    it a coligação would be an inference the data does not carry."""
+    session.add_all(
+        [_majoritario("Q1", "CARLA", partido="PL"), _majoritario("Q2", "DINO", partido="PP")]
+    )
+    session.add_all(
+        [_proposal("Q1", "programa.pdf", "dupla"), _proposal("Q2", "programa.pdf", "dupla")]
+    )
+    session.commit()
+
+    (proposal,) = client.get("/api/candidates/Q1").json()["proposals"]
+    assert proposal["scope"] == "shared"
+    assert proposal["scope_label"] == "Documento compartilhado"
+    assert "(PL, PP)" in proposal["scope_note"]

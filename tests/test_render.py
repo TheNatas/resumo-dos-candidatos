@@ -36,13 +36,13 @@ def _seed(session):
             Candidacy(
                 sq_candidato="OLD1", ano_eleicao=2022, sg_uf="SC", cd_cargo=3,
                 ds_cargo="GOVERNADOR", nome_candidato="JOAO ANTIGO",
-                nome_normalizado="JOAO ANTIGO", sg_partido="PT", is_majoritario=True,
+                nome_normalizado="JOAO ANTIGO", sg_partido="PL", is_majoritario=True,
             ),
             # Out-of-scope UF: config says SC.
             Candidacy(
                 sq_candidato="RS1", ano_eleicao=2026, sg_uf="RS", cd_cargo=3,
                 ds_cargo="GOVERNADOR", nome_candidato="PEDRO GAUCHO",
-                nome_normalizado="PEDRO GAUCHO", sg_partido="PT", is_majoritario=True,
+                nome_normalizado="PEDRO GAUCHO", sg_partido="PSOL", is_majoritario=True,
             ),
         ]
     )
@@ -71,6 +71,19 @@ def test_renders_only_the_scoped_surface(session, tmp_path, _storage):
     assert "htmx" not in page
     # Pages would otherwise run Jekyll and drop underscore paths.
     assert (out / ".nojekyll").is_file()
+
+
+def test_partido_options_come_from_the_rendered_rows(session, tmp_path, _storage):
+    _seed(session)
+    out = tmp_path / "site"
+
+    render_site(session, out=out, base_url="", site_url=None)
+
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert '<option value="PT">' in page
+    # A party that only exists outside the published scope would filter to nothing.
+    assert 'value="PL"' not in page
+    assert 'value="PSOL"' not in page
 
 
 def test_base_url_prefixes_every_internal_link(session, tmp_path, _storage):

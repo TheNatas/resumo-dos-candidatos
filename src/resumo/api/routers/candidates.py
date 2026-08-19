@@ -17,6 +17,14 @@ def list_candidates(
     q: str | None = Query(default=None, description="name search (accent-insensitive)"),
     uf: str | None = None,
     cargo: str | None = None,
+    partido: str | None = Query(default=None, description="sigla exata do partido"),
+    reeleicao: bool | None = Query(
+        default=None,
+        description=(
+            "true = incumbência confirmada (link de tier aceito); false = sem "
+            "incumbência confirmada — o que inclui candidaturas ainda em revisão"
+        ),
+    ),
     year: int | None = Query(
         default=None, description="ano da eleição; omitido = ano configurado no deploy"
     ),
@@ -31,6 +39,8 @@ def list_candidates(
         q=q,
         uf=uf,
         cargo=cargo,
+        partido=partido,
+        reeleicao=reeleicao,
         year=get_settings().election_year if year is None else year,
         limit=limit,
     )

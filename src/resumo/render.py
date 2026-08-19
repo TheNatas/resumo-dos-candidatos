@@ -188,6 +188,9 @@ def render_site(
             results=summaries,
             scope_label=_scope_label(scope),
             cargo_options=[(c["nome"], c["nome"].title()) for c in scope["cargos"]],
+            # Straight off the rows this page carries: the static filter is a DOM
+            # predicate over those cards, so an option no card can match is a dead end.
+            partido_options=sorted({s["partido"] for s in summaries if s["partido"]}),
             total=len(summaries),
         ),
     )
