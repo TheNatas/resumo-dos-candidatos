@@ -170,3 +170,45 @@ def test_without_a_bridge_nothing_changes(session):
     assert result.via_tse == 0
     # Sem CPF do lado do mandato, o par volta a depender do comparador de nomes.
     assert result.links + result.review >= 1
+
+
+def test_connectives_and_stray_initials_do_not_break_the_bridge(session):
+    """A urna registra "GERRI DA CONSOLI" e "A ALEX BRASIL" onde a Casa escreve
+    "Gerri Consoli" e "Alex Brasil". Comparar como texto perderia a ponte por um
+    "DA" — e devolveria a decisão para um humano, que é o que se quer evitar."""
+    mandate = _mandato(session, nome_parlamentar="Alex Brasil")
+    _passada(session, nome_urna="A ALEX BRASIL", nome="ALEXANDER BRASIL ALVES PEREIRA")
+
+    ident = recover_cpfs(session, before_year=2026)[str(mandate.id)]
+    assert ident.cpf == CPF_TITULAR
+
+
+def test_house_may_write_the_name_more_fully_than_the_ballot(session):
+    """"PADRE PEDRO" na urna vira "Padre Pedro Baldissera" na Casa. Só vale porque
+    "BALDISSERA" aparece no nome civil da mesma candidatura."""
+    mandate = _mandato(session, nome_parlamentar="Padre Pedro Baldissera")
+    _passada(session, nome_urna="PADRE PEDRO", nome="PEDRO BALDISSERA")
+
+    ident = recover_cpfs(session, before_year=2026)[str(mandate.id)]
+    assert ident.cpf == CPF_TITULAR
+    assert "nome civil" in ident.matched_on
+
+
+def test_the_extra_surname_must_be_corroborated_by_the_civil_name(session):
+    """Sem essa exigência, qualquer sobrenome serviria: "PEDRO" casaria com
+    "Pedro Qualquer Coisa" e o histórico iria para a ficha errada."""
+    mandate = _mandato(session, nome_parlamentar="Pedro Silvestre")
+    # O nome civil não contém "SILVESTRE".
+    _passada(session, nome_urna="PEDRO", nome="PEDRO DE ASSIS SOUZA")
+
+    assert str(mandate.id) not in recover_cpfs(session, before_year=2026)
+
+
+def test_two_people_matching_the_looser_rule_is_still_ambiguity(session):
+    mandate = _mandato(session, nome_parlamentar="Pedro Silvestre")
+    _passada(session, nome_urna="PEDRO", nome="PEDRO DE ASSIS SILVESTRE",
+             sq="P1", cpf=CPF_TITULAR)
+    _passada(session, nome_urna="PEDRO", nome="PEDRO SILVESTRE JUNIOR",
+             sq="P2", cpf=CPF_OUTRO)
+
+    assert str(mandate.id) not in recover_cpfs(session, before_year=2026)

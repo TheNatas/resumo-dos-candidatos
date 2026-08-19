@@ -47,6 +47,19 @@ from resumo.util import normalize_name, valid_cpf
 # Comparação por prefixo, não por substring: "NÃO ELEITO" contém "ELEITO".
 _SEATED_PREFIXES = ("ELEITO", "SUPLENTE")
 
+# Conectivos e iniciais soltas não distinguem pessoas: a urna registra
+# "GERRI DA CONSOLI" e "A ALEX BRASIL" onde a Casa escreve "Gerri Consoli" e
+# "Alex Brasil". Compará-los como texto faria a ponte falhar por causa de um "DA".
+_CONECTIVOS = frozenset({"DA", "DE", "DO", "DAS", "DOS", "E"})
+
+
+def _tokens(nome: str | None) -> frozenset[str]:
+    return frozenset(
+        t
+        for t in (normalize_name(nome) or "").split()
+        if len(t) > 1 and t not in _CONECTIVOS
+    )
+
 
 @dataclass(frozen=True)
 class BridgedIdentity:
@@ -90,8 +103,8 @@ def recover_cpfs(
     if ufs:
         stmt = stmt.where(Candidacy.sg_uf.in_(ufs))
 
-    # (uf, nome de urna normalizado) -> candidaturas passadas que ocuparam cadeira
-    por_nome: dict[tuple[str, str], list[Candidacy]] = defaultdict(list)
+    # Candidaturas passadas que ocuparam cadeira, agrupadas por UF.
+    por_uf: dict[str, list[Candidacy]] = defaultdict(list)
     for cand in session.execute(stmt).scalars():
         if not _seated(cand.ds_sit_tot_turno):
             continue
@@ -101,18 +114,36 @@ def recover_cpfs(
         # engano em valores mascarados iguais.
         if not valid_cpf(cand.cpf_raw):
             continue
-        chave = normalize_name(cand.nome_urna)
-        if chave:
-            por_nome[(cand.sg_uf or "", chave)].append(cand)
+        if _tokens(cand.nome_urna):
+            por_uf[cand.sg_uf or ""].append(cand)
 
     bridged: dict[str, BridgedIdentity] = {}
     for mandate in mandates:
-        chave = normalize_name(mandate.nome_parlamentar)
-        if not chave:
+        alvo = _tokens(mandate.nome_parlamentar)
+        if not alvo:
             continue
-        hits = por_nome.get((mandate.sigla_uf or "", chave), [])
-        # Uma mesma pessoa pode aparecer em mais de uma eleição passada; isso não é
-        # ambiguidade. Duas pessoas diferentes com o mesmo nome de urna, sim.
+        pool = por_uf.get(mandate.sigla_uf or "", [])
+
+        # Nível 1 — o mesmo nome, ignorando conectivo e inicial solta.
+        hits = [c for c in pool if _tokens(c.nome_urna) == alvo]
+        regra = "urna == nome parlamentar"
+
+        # Nível 2 — a Casa escreve o nome mais completo que a urna: "PADRE PEDRO"
+        # vira "Padre Pedro Baldissera", "PEDRÃO" vira "Pedrão Silvestre". Só vale
+        # quando o que a Casa acrescentou aparece no NOME CIVIL daquela mesma
+        # candidatura: sem essa corroboração, qualquer sobrenome serviria.
+        if not hits:
+            hits = [
+                c
+                for c in pool
+                if _tokens(c.nome_urna) <= alvo
+                and (alvo - _tokens(c.nome_urna)) <= _tokens(c.nome_candidato)
+            ]
+            regra = "urna ⊂ nome parlamentar, resto confirmado pelo nome civil"
+
+        # Uma mesma pessoa em mais de uma eleição não é ambiguidade; duas pessoas
+        # diferentes, sim — e é exatamente o caso em que um desempate atribuiria o
+        # histórico de uma à outra.
         cpfs = {valid_cpf(c.cpf_raw) for c in hits}
         if len(cpfs) != 1:
             continue
@@ -122,6 +153,6 @@ def recover_cpfs(
             source_year=mais_recente.ano_eleicao,
             source_sq_candidato=mais_recente.sq_candidato,
             source_nome=mais_recente.nome_candidato or "",
-            matched_on=chave,
+            matched_on=f"{normalize_name(mais_recente.nome_urna)} ({regra})",
         )
     return bridged
