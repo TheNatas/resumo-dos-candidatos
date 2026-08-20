@@ -87,6 +87,21 @@ def test_partido_options_come_from_the_rendered_rows(session, tmp_path, _storage
     assert 'value="PSOL"' not in page
 
 
+def test_static_filters_ship_with_the_page(session, tmp_path, _storage):
+    """O painel de filtros é script próprio copiado junto — sem ele o botão some e
+    a lista publicada fica sem cargo, partido e reeleição."""
+    _seed(session)
+    out = tmp_path / "site"
+
+    render_site(session, out=out, base_url="", site_url=None)
+
+    assert (out / "static" / "filters.js").is_file()
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert '<dialog id="filtros"' in page
+    assert 'name="reeleicao" value="sim"' in page
+    assert "value=\"nao\"" not in page
+
+
 def test_base_url_prefixes_every_internal_link(session, tmp_path, _storage):
     _seed(session)
     out = tmp_path / "site"
@@ -95,6 +110,7 @@ def test_base_url_prefixes_every_internal_link(session, tmp_path, _storage):
 
     page = (out / "index.html").read_text(encoding="utf-8")
     assert 'href="/resumo-dos-candidatos/static/style.css"' in page
+    assert 'src="/resumo-dos-candidatos/static/filters.js"' in page
     assert 'href="/resumo-dos-candidatos/candidato/C1"' in page
     # No internal link may escape the prefix, or it 404s on a Pages project site.
     assert 'href="/static' not in page

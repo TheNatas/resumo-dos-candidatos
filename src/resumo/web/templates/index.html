@@ -1,37 +1,81 @@
 {% extends "base.html" %}
 {% block content %}
+{# `hx-include` pega o estado inteiro do painel a cada requisição — os interruptores
+   de reeleição entram só quando marcados (htmx ignora checkbox desmarcado), que é
+   exatamente a semântica do filtro: nenhum ou os dois marcados não restringem nada. #}
+{% set incluir = "[name='q'],[name='cargo'],[name='partido'],[name='reeleicao']" %}
 <section class="search">
   <h1>Busque um candidato</h1>
   <p class="scope">{{ scope_label }}</p>
-  <div class="filters">
+  <div class="busca">
     <input type="search" name="q" placeholder="Nome do candidato…" value="{{ q }}"
            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="keyup changed delay:300ms, search"
-           hx-include="[name='cargo'],[name='partido'],[name='reeleicao']" autofocus>
-    <select name="cargo" class="cargo"
-            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
-            hx-include="[name='q'],[name='partido'],[name='reeleicao']">
-      <option value="">Todos os cargos</option>
-      {% for value, label in cargo_options %}
-        <option value="{{ value }}" {% if cargo == value %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-    <select name="partido" class="partido"
-            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
-            hx-include="[name='q'],[name='cargo'],[name='reeleicao']">
-      <option value="">Todos os partidos</option>
-      {% for sigla in partido_options %}
-        <option value="{{ sigla }}" {% if partido == sigla %}selected{% endif %}>{{ sigla }}</option>
-      {% endfor %}
-    </select>
-    <select name="reeleicao" class="reeleicao"
-            hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
-            hx-include="[name='q'],[name='cargo'],[name='partido']">
-      <option value="">Reeleição: todas</option>
-      <option value="sim" {% if reeleicao == 'sim' %}selected{% endif %}>Reeleição confirmada</option>
-      <option value="nao" {% if reeleicao == 'nao' %}selected{% endif %}>Sem reeleição confirmada</option>
-    </select>
+           hx-include="{{ incluir|safe }}" autofocus>
+    {# Sem JS o <dialog> não abre; o botão nasce oculto e filters.js o revela, para
+       que ninguém encontre um controle que não faz nada. #}
+    <button type="button" class="filtros-abrir" data-filtros-abrir hidden
+            aria-haspopup="dialog" aria-controls="filtros">
+      <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false">
+        <path d="M3 5h14M6 10h8M9 15h2" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round"></path>
+      </svg>
+      Filtros
+      <span class="filtros-contagem" data-filtros-contagem hidden></span>
+    </button>
   </div>
 </section>
+
+<dialog id="filtros" class="modal" aria-labelledby="filtros-titulo">
+  <div class="modal-topo">
+    <h2 id="filtros-titulo">Filtros</h2>
+    <button type="button" class="modal-fechar" data-filtros-fechar aria-label="Fechar filtros">&times;</button>
+  </div>
+  <div class="modal-corpo">
+    <label class="campo">
+      <span class="campo-rotulo">Cargo</span>
+      <select name="cargo"
+              hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
+              hx-include="{{ incluir|safe }}">
+        <option value="">Todos os cargos</option>
+        {% for value, label in cargo_options %}
+          <option value="{{ value }}" {% if cargo == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="campo">
+      <span class="campo-rotulo">Partido</span>
+      <select name="partido"
+              hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
+              hx-include="{{ incluir|safe }}">
+        <option value="">Todos os partidos</option>
+        {% for sigla in partido_options %}
+          <option value="{{ sigla }}" {% if partido == sigla %}selected{% endif %}>{{ sigla }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <fieldset class="campo grupo">
+      <legend class="campo-rotulo">Status de reeleição</legend>
+      <label class="switch">
+        <input type="checkbox" role="switch" name="reeleicao" value="sim"
+               {% if reeleicao == 'sim' %}checked{% endif %}
+               hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
+               hx-include="{{ incluir|safe }}">
+        <span>Tentando reeleição</span>
+      </label>
+      {# Só o lado positivo vira filtro: `is_incumbent_reelection` falso quer dizer
+         apenas que nenhum vínculo aceito afirma reeleição — uma candidatura ainda
+         não resolvida cai ali, e listá-la como "sem reeleição" seria afirmar sobre
+         a pessoa algo que o dado não sustenta. #}
+      <p class="hint">Ligado, a lista mostra só quem tem vínculo verificado com um
+      mandato atual.</p>
+    </fieldset>
+  </div>
+  <div class="modal-rodape">
+    <button type="button" class="botao-link" data-filtros-limpar>Limpar filtros</button>
+    <button type="button" class="botao-primario" data-filtros-fechar>Ver resultados</button>
+  </div>
+</dialog>
+
 <section id="results">
   {% include "_results.html" %}
 </section>

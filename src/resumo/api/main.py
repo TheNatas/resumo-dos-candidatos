@@ -25,10 +25,20 @@ templates = Jinja2Templates(directory=str(_WEB / "templates"))
 templates.env.globals["base_url"] = get_settings().site_base_url
 templates.env.globals["election_year"] = get_settings().election_year
 
-# The filter is a <select>, so "no choice" arrives as an empty string — a
-# `bool | None` query param would 422 on it. Parsed here instead, which also keeps
-# the URL readable ("?reeleicao=sim") for a link someone may share.
-_REELEICAO = {"sim": True, "nao": False}
+
+def _reeleicao_filter(value: str | None) -> bool | None:
+    """The page offers one switch: on, the list narrows to confirmed incumbents; off,
+    it does not restrict at all.
+
+    Only "sim" is a filter. The negative side is deliberately not offered here: a row
+    is False merely because no accepted link says otherwise, so "sem reeleição
+    confirmada" would present unresolved candidacies as a claim about the person.
+    `/api/candidates?reeleicao=false` still exposes it, where the caller reads the
+    caveat. Parsed by hand rather than as a `bool | None` query param, which would 422
+    on the empty string a link shared from the old <select> still carries.
+    """
+    return True if (value or "").lower() == "sim" else None
+
 
 app = FastAPI(title="Resumo dos Candidatos", version="0.1.0")
 app.include_router(candidates.router)
@@ -85,7 +95,7 @@ def index(
             q=q,
             cargo=cargo,
             partido=partido,
-            reeleicao=_REELEICAO.get((reeleicao or "").lower()),
+            reeleicao=_reeleicao_filter(reeleicao),
             # Pinned to the configured year: the same database also holds the
             # historical validation set (2022), and an unscoped search lists those
             # rows — with their "ELEITO" badges — under an "Eleições 2026" header.

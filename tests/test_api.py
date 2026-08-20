@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from fastapi.testclient import TestClient
 
@@ -153,7 +154,20 @@ def test_filters_by_reeleicao(session):
     page = client.get("/", params={"reeleicao": "sim"}).text
     assert "JOSE" in page
     assert "ANA PEREIRA" not in page
-    # An empty select submits an empty string; it must read as "no filter", not 422.
+    assert re.search(r'value="sim"\s+checked', page)  # o interruptor volta ligado
+
+    # The page offers no "sem reeleição confirmada" switch — that side of the data is
+    # an absence of evidence, not a claim about the candidate. A link shared from the
+    # old <select> must degrade to "no filter", so what the reader sees always matches
+    # the one switch on screen: everyone listed, the switch off.
+    herdado = client.get("/", params={"reeleicao": "nao"})
+    assert herdado.status_code == 200
+    assert "JOSE" in herdado.text
+    assert "ANA PEREIRA" in herdado.text
+    assert "checked" not in herdado.text
+
+    # An unchecked switch submits nothing at all, but the old empty select still
+    # submits an empty string; it must read as "no filter", not 422.
     assert client.get("/", params={"reeleicao": ""}).status_code == 200
 
 

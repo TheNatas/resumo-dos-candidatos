@@ -6,6 +6,7 @@
   <title>{% block title %}Resumo dos Candidatos{% endblock %}</title>
   <link rel="stylesheet" href="{{ base_url }}/static/style.css">
   {% if not static_mode %}<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>{% endif %}
+  <script src="{{ base_url }}/static/filters.js" defer></script>
 </head>
 <body>
   <header>
