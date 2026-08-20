@@ -329,7 +329,11 @@ def attendance_payload(session: Session, mandate_id: uuid.UUID) -> dict:
 
     metrica = Counter(r.metrica for r in rows).most_common(1)[0][0]
     metric = att.metric_for(metrica)
-    ordem = list(metric.unidades) if metric else [AttendanceUnit.DIA, AttendanceUnit.SESSAO]
+    # A ordem de exibição é a que a métrica declara, mas qualquer unidade presente no
+    # banco e ausente dessa lista entra no fim: um número coletado não pode sumir da
+    # ficha porque o registro da métrica ficou desatualizado.
+    ordem = list(metric.unidades) if metric else []
+    ordem += [u for u in (AttendanceUnit.DIA, AttendanceUnit.SESSAO) if u not in ordem]
 
     payload_rows = []
     for unidade in ordem:

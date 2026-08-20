@@ -188,13 +188,21 @@ jobs:
           coletar uv run resumo collect camara-proposicoes
           coletar uv run resumo collect camara-votacoes    --inicio "$DE_CAMARA" --fim "$HOJE"
           coletar uv run resumo collect camara-eventos     --inicio "$DE_CAMARA" --fim "$HOJE"
+          coletar uv run resumo collect camara-presenca
           coletar uv run resumo collect senado-despesas    --anos "$ANOS"
           coletar uv run resumo collect senado-proposicoes
           coletar uv run resumo collect senado-votacoes    --inicio "$DE_SENADO" --fim "$HOJE"
+          coletar uv run resumo collect senado-licencas
           coletar uv run resumo collect alesc-despesas     --anos 2025,2026
           coletar uv run resumo collect alesc-votacoes     --inicio "$DE_ALESC" --fim "$HOJE"
           coletar uv run resumo collect alesc-presenca     --inicio "$DE_ALESC" --fim "$HOJE"
           coletar uv run resumo collect alesc-proposicoes  --anos 2026
+
+          # Consolidação da frequência derivada: lê o que os coletores acima gravaram,
+          # sem rede. Depende deles, então roda por último. A Câmara não entra — a
+          # frequência dela é o relatório oficial, coletado em `camara-presenca`.
+          coletar uv run resumo collect senado-presenca-resumo
+          coletar uv run resumo collect alesc-presenca-resumo
 
           coletar uv run resumo collect emendas
           coletar uv run resumo link-emendas-authors

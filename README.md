@@ -46,8 +46,9 @@ Ampliar é trocar variáveis de ambiente: `RESUMO_TARGET_UFS=""` roda nacional,
 | **TSE — CDN/CKAN** (`consulta_cand`, `bem_candidato`, `proposta_governo`) | candidaturas, bens, propostas | — |
 | **TSE — `foto_cand`** | fotos oficiais de registro | — |
 | **TSE — `prestacao_contas`** | receitas, despesas contratadas, pagamentos, doadores originários | — |
-| **Câmara dos Deputados API v2** | mandatos, votações, proposições, presença, CEAP | — |
-| **Senado Federal — dados abertos** | mandatos, votações, proposições, CEAPS | — |
+| **Câmara dos Deputados API v2** | mandatos, votações, proposições, eventos, CEAP | — |
+| **Câmara — portal (`camara.leg.br`)** | **frequência oficial em plenário** (dias e sessões, com faltas justificadas e não justificadas) | — |
+| **Senado Federal — dados abertos** | mandatos, votações, proposições, CEAPS, licenças | — |
 | **ALESC** (e-Legis + portal da transparência) | mandatos, votações nominais, proposições, presença, gastos de gabinete | — |
 | **CGU — `EmendasParlamentares.zip`** | emendas parlamentares individuais (empenhado/liquidado/pago) | — |
 
@@ -94,8 +95,26 @@ programa e ação, que a API não devolve).
   `odsele`** (ficam em `eleicoes/eleicoes<ano>/fotos/`), e esse caminho já mudou entre
   ciclos — por isso a URL inteira é configuração (`RESUMO_TSE_FOTOS_URL_TEMPLATE`),
   com o catálogo CKAN consultado antes do template.
-- **Presença é derivada**, não publicada: na Câmara vem de listas de eventos, no Senado
-  dos códigos de comparecimento das votações. Sempre rotulada como derivada.
+- **Frequência: cada Casa publica numa régua diferente, e a ficha usa a régua da
+  fonte.** Nada é convertido — converter exigiria afirmar o que a fonte não diz.
+  - **Câmara — dias E sessões, oficiais.** O relatório de presença em plenário
+    (Ato da Mesa nº 191/2017) publica as duas réguas já contadas, separando ausência
+    justificada de não justificada, restrito ao período de exercício do parlamentar.
+    As duas **não batem de propósito**: quem faltou a uma sessão do dia e compareceu
+    a outra conta como *dia* com presença. A API de dados abertos não serve para isso
+    — `/eventos/{id}/deputados` devolve **apenas quem compareceu**.
+  - **Senado — sessões, derivada.** Não existe serviço de presença nos dados abertos;
+    a contagem sai dos códigos de comparecimento das votações nominais e cobre só as
+    sessões em que houve votação nominal. Onde a fonte diz apenas "não compareceu", a
+    ausência fica **sem classificação** — ela não afirma que foi injustificada.
+  - **ALESC — sessões, observada.** A folha de presença é publicada por sessão, mas
+    **toda** ausência vem rotulada como justificada e sem motivo: com esta fonte não
+    há como afirmar falta injustificada.
+  - **Licença não é falta.** Licenças e afastamentos do Senado são medidos em dias
+    corridos de calendário e ficam ao lado da presença, nunca somados a ela.
+- **O denominador é por parlamentar, não por ano.** Quem se licencia tem menos sessões
+  no período de exercício, então a ficha mostra o percentual — um ranking por número
+  absoluto de faltas é enganoso.
 
 ---
 
@@ -154,14 +173,22 @@ uv run resumo collect camara-despesas    --anos 2023,2024,2025,2026
 uv run resumo collect camara-proposicoes
 uv run resumo collect camara-votacoes    --inicio 2026-01-01 --fim 2026-08-18
 uv run resumo collect camara-eventos     --inicio 2026-01-01 --fim 2026-08-18
+uv run resumo collect camara-presenca                 # frequência OFICIAL (dias+sessões)
 uv run resumo collect senado-despesas    --anos 2023,2024,2025,2026
 uv run resumo collect senado-proposicoes
 uv run resumo collect senado-votacoes    --inicio 2026-01-01 --fim 2026-08-18
+uv run resumo collect senado-licencas                 # licenças formais, em dias
 uv run resumo collect alesc-deputados
 uv run resumo collect alesc-despesas     --anos 2025,2026
 uv run resumo collect alesc-votacoes     --inicio 2026-01-01 --fim 2026-08-18
 uv run resumo collect alesc-presenca     --inicio 2026-01-01 --fim 2026-08-18
 uv run resumo collect alesc-proposicoes  --anos 2026
+
+# 3b. Consolidação da frequência derivada (sem rede — lê o que já foi coletado).
+#     A Câmara NÃO passa por aqui: `attendance_record` só recebe presenças dela,
+#     e agregá-las daria 100% para todo deputado federal.
+uv run resumo collect senado-presenca-resumo
+uv run resumo collect alesc-presenca-resumo
 
 # 4. Emendas parlamentares (arquivo único da CGU, ~32 MB), depois a ponte autor↔mandato
 uv run resumo collect emendas

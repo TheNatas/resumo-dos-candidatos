@@ -30,8 +30,8 @@ import re
 from dataclasses import dataclass
 
 from resumo.ingestion.html import find_all, parse_html, text_of
-from resumo.util import parse_int
 from resumo.util import normalize_name as _fold
+from resumo.util import parse_int
 
 # Os seis rótulos da tabela-resumo, verificados ao vivo. O casamento é por trecho
 # normalizado (sem acento, sem caixa, sem o asterisco da nota de rodapé) porque a

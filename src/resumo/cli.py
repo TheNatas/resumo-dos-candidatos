@@ -195,6 +195,26 @@ def camara_eventos(
     _run(EventosCollector(), data_inicio=inicio, data_fim=fim, id_legislatura=legislatura, limit=limit)
 
 
+@collect.command("camara-presenca")
+def camara_presenca(
+    anos: Optional[str] = typer.Option(
+        None, help="anos (vírgula, ex. 2023,2024). Omitir = os 4 anos da legislatura."
+    ),
+    legislatura: Optional[int] = None,
+    limit: Optional[int] = typer.Option(None, help="máximo de deputados"),
+) -> None:
+    """Relatório OFICIAL de presença em plenário (dias e sessões, com faltas)."""
+    from resumo.ingestion.camara.presenca_plenario import PresencaPlenarioCollector
+
+    years = _split(anos)
+    _run(
+        PresencaPlenarioCollector(),
+        anos=[int(a) for a in years] if years else None,
+        id_legislatura=legislatura,
+        limit=limit,
+    )
+
+
 # ── Senado ────────────────────────────────────────────────────────────────────
 @collect.command("senado-senadores")
 def senado_senadores(
@@ -217,6 +237,25 @@ def senado_votacoes(
     from resumo.ingestion.senado.votacoes import VotacoesCollector
 
     _run(VotacoesCollector(), data_inicio=inicio, data_fim=fim, id_legislatura=legislatura, limit=limit)
+
+
+@collect.command("senado-licencas")
+def senado_licencas(
+    legislatura: Optional[int] = None,
+    limit: Optional[int] = None,
+) -> None:
+    """Licenças e afastamentos formais (dias corridos, com o motivo publicado)."""
+    from resumo.ingestion.senado.licencas import LicencasCollector
+
+    _run(LicencasCollector(), id_legislatura=legislatura, limit=limit)
+
+
+@collect.command("senado-presenca-resumo")
+def senado_presenca_resumo() -> None:
+    """Consolida a presença derivada das votações nominais (sem rede)."""
+    from resumo.ingestion.attendance_summary import AttendanceSummaryCollector
+
+    _run(AttendanceSummaryCollector("senado_votacao_comparecimento"))
 
 
 @collect.command("senado-proposicoes")
@@ -312,6 +351,14 @@ def alesc_presenca(
         limit=limit,
         max_pages=max_pages,
     )
+
+
+@collect.command("alesc-presenca-resumo")
+def alesc_presenca_resumo() -> None:
+    """Consolida a presença das sessões plenárias já coletadas (sem rede)."""
+    from resumo.ingestion.attendance_summary import AttendanceSummaryCollector
+
+    _run(AttendanceSummaryCollector("alesc_sessao_presenca"))
 
 
 @collect.command("alesc-proposicoes")
