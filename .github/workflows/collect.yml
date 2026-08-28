@@ -45,6 +45,9 @@ jobs:
   coleta:
     runs-on: ubuntu-latest
     timeout-minutes: 330 # o teto do job é 6 h; o backfill frio cabe com folga
+    outputs:
+      # Fontes em que NENHUM coletor passou — o job `alarme` lê isto.
+      fontes_fora: ${{ steps.coleta.outputs.fontes_fora }}
     services:
       db:
         image: postgres:16
@@ -132,10 +135,27 @@ jobs:
           HOJE="$(date -u +%F)"
           ANOS="2023,2024,2025,2026"
           falhas=()
+          declare -A tentados=() falhou=()
+
+          # A fonte de um coletor é o prefixo do nome depois de `collect`
+          # (`tse-fotos` -> `tse`). O que não passa por `collect` responde por si
+          # mesmo, e uma fonte só é julgada pelos coletores que ela de fato tem.
+          fonte_de() {
+            local anterior="" tok
+            for tok in "$@"; do
+              [ "$anterior" = "collect" ] && { echo "${tok%%-*}"; return; }
+              anterior="$tok"
+            done
+            echo "${*##* }"
+          }
+
           coletar() {
+            local fonte; fonte="$(fonte_de "$@")"
+            tentados[$fonte]=$(( ${tentados[$fonte]:-0} + 1 ))
             echo "::group::$*"
             if ! "$@"; then
               falhas+=("$*")
+              falhou[$fonte]=$(( ${falhou[$fonte]:-0} + 1 ))
               echo "::warning::coletor falhou: $*"
             fi
             echo "::endgroup::"
@@ -207,6 +227,17 @@ jobs:
           coletar uv run resumo collect emendas
           coletar uv run resumo link-emendas-authors
 
+          # Uma fonte em que TODOS os coletores falharam não é fonte instável: é
+          # fonte fora do ar. A diferença é a que importa — a primeira se resolve
+          # sozinha na próxima execução, a segunda só para de piorar quando alguém
+          # age, e é justamente essa que passava despercebida.
+          fontes_fora=()
+          while IFS= read -r fonte; do
+            if [ "${falhou[$fonte]:-0}" -eq "${tentados[$fonte]}" ]; then
+              fontes_fora+=("$fonte")
+            fi
+          done < <(printf '%s\n' "${!tentados[@]}" | sort)
+
           if [ ${#falhas[@]} -gt 0 ]; then
             echo "::warning::${#falhas[@]} coletor(es) falharam nesta execução"
             { echo "### Coletores com falha (${#falhas[@]})"; printf '\n- `%s`' "${falhas[@]}"; } \
@@ -215,14 +246,21 @@ jobs:
             echo "### Todos os coletores rodaram sem erro" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # Publica a lista para o passo de aviso. Sem isso a degradação fica só no
-          # log: o Actions só avisa quando o workflow FALHA, e este de propósito não
-          # falha por fonte fora do ar — foi assim que nove coletores ficaram
-          # silenciosamente parados por duas execuções.
+          if [ ${#fontes_fora[@]} -gt 0 ]; then
+            echo "::error::fonte(s) sem nenhum coletor bem-sucedido: ${fontes_fora[*]}"
+            { printf '\n\n### Fontes fora do ar (%s)\n' "${#fontes_fora[@]}"
+              printf -- '\n- `%s`' "${fontes_fora[@]}"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Publica as listas para o passo de aviso e para o job `alarme`. Sem isso a
+          # degradação fica só no log: `coleta` continua não falhando por fonte de
+          # terceiro fora do ar, porque a publicação depende dela. Quem torna o
+          # problema visível é a issue — e, quando uma fonte INTEIRA cai, o `alarme`.
           {
             echo "falhas<<FIM"
             printf '%s\n' "${falhas[@]}"
             echo "FIM"
+            echo "fontes_fora=${fontes_fora[*]}"
           } >> "$GITHUB_OUTPUT"
 
       # Um aviso que ninguém vê não é aviso. Mantém UMA issue aberta: comenta
@@ -232,6 +270,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FALHAS: ${{ steps.coleta.outputs.falhas }}
+          FONTES_FORA: ${{ steps.coleta.outputs.fontes_fora }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TITULO="Coletores falhando"
@@ -239,8 +278,16 @@ jobs:
                 --jq ".[] | select(.title == \"$TITULO\") | .number" | head -1)
 
           if [ -n "$(echo "$FALHAS" | tr -d '[:space:]')" ]; then
-            corpo=$(printf 'Coletores que falharam na última execução:\n\n%s\n\nExecução: %s' \
-                    "$(echo "$FALHAS" | sed 's/^/- `/; s/$/`/')" "$RUN_URL")
+            # A issue listava só os comandos, e uma fonte inteira fora do ar lia-se
+            # igual a três coletores instáveis. Dito com todas as letras, porque é a
+            # única linha que distingue "hoje sem dado novo" de "esse dado parou".
+            aviso=""
+            if [ -n "$FONTES_FORA" ]; then
+              aviso=$(printf '\n\n**Fonte(s) sem nenhum coletor bem-sucedido: %s.** Não é fonte instável: esse dado parou de chegar e envelhece em silêncio até alguém agir.' \
+                      "$FONTES_FORA")
+            fi
+            corpo=$(printf 'Coletores que falharam na última execução:\n\n%s%s\n\nExecução: %s' \
+                    "$(echo "$FALHAS" | sed 's/^/- `/; s/$/`/')" "$aviso" "$RUN_URL")
             if [ -n "$num" ]; then
               gh issue comment "$num" --body "$corpo"
             else
@@ -276,6 +323,27 @@ jobs:
               --notes "Banco (pg_dump -Fc) e arquivos binários da última coleta. Sobrescrito a cada execução do workflow \`collect\`. Não é um release de software."
           gh release upload "$SNAPSHOT_TAG" \
             "$SNAPSHOT_DIR/resumo.dump" "$SNAPSHOT_DIR/storage.tar.gz" --clobber
+
+  # O Actions só notifica quando o workflow FALHA, e `coleta` de propósito não falha
+  # por fonte fora do ar. O buraco: por nove dias os sete coletores do TSE falharam
+  # toda noite e a execução aparecia verde — o alarme existia (a issue), mas nada
+  # tornava a execução vermelha, então ninguém olhou.
+  #
+  # Este job é só esse sinal. Fica separado de `coleta` porque `publica` depende dela:
+  # reprovar a coleta tiraria o site do ar por causa de uma fonte de terceiro, que é
+  # exatamente o oposto do que se quer. Aqui a publicação segue com o que já existe em
+  # base, e a execução fica vermelha até a fonte voltar.
+  alarme:
+    needs: coleta
+    if: needs.coleta.result == 'success' && needs.coleta.outputs.fontes_fora != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Uma fonte inteira parou de responder
+        run: |
+          echo "::error::sem nenhum coletor bem-sucedido em: ${{ needs.coleta.outputs.fontes_fora }}"
+          echo "Coletor isolado falhando é ruído de fonte pública e não chega aqui."
+          echo "Isto é uma fonte inteira fora do ar: o dado dela parou de chegar."
+          exit 1
 
   # Dado novo só vale quando está no ar. Reaproveita o `deploy.yml` inteiro em vez
   # de duplicar render e publicação — uma cópia só do caminho que gera o site.
