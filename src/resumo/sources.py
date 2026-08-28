@@ -24,9 +24,14 @@ Votação (qualquer)   **No link.** ``camara.leg.br/votacoes/{id}`` 404s, and
 Despesa              Whatever ``Expense.url_documento`` holds — the scanned
                      receipt, published by the Casa. Never constructed here.
 ===================  ==========================================================
+
+`source_portals` applies the same rule one level up: the landing page of each of the
+five sources, for the /sobre page.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from resumo.config import get_settings
 from resumo.db.models import House
@@ -50,3 +55,52 @@ def proposition_url(house: House | None, proposition_id: str | None) -> str | No
             return None
         return f"{get_settings().alesc_elegis_base.rstrip('/')}/proposicoes/{bare}"
     return None
+
+
+@dataclass(frozen=True)
+class SourcePortal:
+    """One official page a reader can open to reach a source for themselves."""
+
+    label: str
+    url: str
+
+
+def source_portals() -> dict[str, tuple[SourcePortal, ...]]:
+    """Landing pages of the five sources, keyed by the sigla the /sobre page prints.
+
+    Same rule as `proposition_url`: a link that lands on a search form or a soft 404
+    is worse than no link. So these are the *portals* — the page from which a reader
+    reaches the dataset — never the machine endpoints the collectors call, which
+    answer JSON or a ZIP to a browser. Each was opened and shown to render the portal
+    it claims, except the TSE ones: `tse.jus.br` answers 403 to every request from a
+    datacenter IP, so that host is verifiable only from a residential browser. The
+    ALESC and Câmara portals come from configuration, because a moved host there is
+    an env var, not a deploy.
+    """
+    settings = get_settings()
+    camara = settings.camara_portal_base.rstrip("/")
+    return {
+        # A CKAN portal: the same host the collector queries under /api/3/action.
+        "tse": (SourcePortal("dados abertos do TSE", "https://dadosabertos.tse.jus.br/"),),
+        "camara": (
+            SourcePortal("dados abertos", "https://dadosabertos.camara.leg.br/"),
+            # A presença em plenário é publicada por deputado, dentro da ficha de
+            # cada um — o índice é a página de quem são os deputados.
+            SourcePortal("deputados e presença", f"{camara}/deputados/quem-sao"),
+            SourcePortal("gastos parlamentares", f"{camara}/transparencia/gastos-parlamentares"),
+        ),
+        "senado": (
+            SourcePortal("dados abertos", "https://www12.senado.leg.br/dados-abertos"),
+            SourcePortal("transparência", "https://www12.senado.leg.br/transparencia"),
+        ),
+        "alesc": (
+            SourcePortal("e-Legis", f"{settings.alesc_elegis_base.rstrip('/')}/"),
+            SourcePortal("transparência", f"{settings.alesc_transparencia_base.rstrip('/')}/"),
+        ),
+        "cgu": (
+            SourcePortal(
+                "emendas parlamentares",
+                "https://portaldatransparencia.gov.br/download-de-dados/emendas-parlamentares",
+            ),
+        ),
+    }

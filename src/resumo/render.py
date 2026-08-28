@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 from resumo import cargos
 from resumo.api import queries
 from resumo.config import get_settings
+from resumo.sources import source_portals
 from resumo.util import ano_range, brl
 
 _WEB = Path(__file__).resolve().parent / "web"
@@ -253,7 +254,9 @@ def render_site(
     )
     _write(
         out / "sobre" / "index.html",
-        env.get_template("sobre.html").render(scope_label=_scope_label(scope)),
+        env.get_template("sobre.html").render(
+            scope_label=_scope_label(scope), fontes=source_portals()
+        ),
     )
     _write(out / "404.html", env.get_template("not_found.html").render())
     _write_json(out / "api" / "scope.json", scope)

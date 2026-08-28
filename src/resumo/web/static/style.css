@@ -101,6 +101,10 @@ section h2 { font-size:1.05rem; margin:1.5rem 0 .5rem; }
 .proposals { list-style:none; padding:0; }
 .proposals li { margin-bottom:.5rem; }
 .proposals .note { margin:.15rem 0 0; }
+/* Os portais oficiais moram sob a descrição da fonte, em corpo de nota: são a
+   saída do site, não competem com o texto que qualifica o número. */
+.fontes-links { display:block; margin-top:.15rem; font-size:.78rem; color:var(--muted); }
+.fontes-links a { color:var(--accent); }
 section h3 { font-size:.85rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:1.2rem 0 .5rem; }
 .donors { list-style:none; padding:0; margin:0; }
 .donors li { display:flex; justify-content:space-between; gap:1rem; padding:.45rem .6rem; border-bottom:1px solid var(--line); font-size:.9rem; }

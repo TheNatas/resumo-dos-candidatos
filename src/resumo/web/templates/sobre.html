@@ -20,21 +20,27 @@
     <h2>Fontes</h2>
     <ul class="proposals">
       <li><strong>TSE</strong> — candidaturas, bens, propostas de governo, prestação
-      de contas de campanha e as fotos oficiais de registro.</li>
+      de contas de campanha e as fotos oficiais de registro.
+      <span class="fontes-links">{% for p in fontes.tse %}<a href="{{ p.url }}" rel="noopener">{{ p.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span></li>
       <li><strong>Câmara dos Deputados</strong> — mandatos, votações, proposições,
       cota parlamentar (CEAP) e o <strong>relatório oficial de presença em
-      plenário</strong>.</li>
+      plenário</strong>.
+      <span class="fontes-links">{% for p in fontes.camara %}<a href="{{ p.url }}" rel="noopener">{{ p.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span></li>
       <li><strong>Senado Federal</strong> — mandatos, votações, proposições, CEAPS e
-      licenças.</li>
+      licenças.
+      <span class="fontes-links">{% for p in fontes.senado %}<a href="{{ p.url }}" rel="noopener">{{ p.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span></li>
       <li><strong>ALESC</strong> — mandatos, votações nominais, proposições, presença
       e gastos de gabinete (verba de gabinete e diárias — <em>não</em> é CEAP, que é
-      a cota da Câmara; são regimes distintos e os valores não se comparam).</li>
+      a cota da Câmara; são regimes distintos e os valores não se comparam).
+      <span class="fontes-links">{% for p in fontes.alesc %}<a href="{{ p.url }}" rel="noopener">{{ p.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span></li>
       <li><strong>CGU</strong> — emendas parlamentares individuais (empenhado,
-      liquidado, pago).</li>
+      liquidado, pago).
+      <span class="fontes-links">{% for p in fontes.cgu %}<a href="{{ p.url }}" rel="noopener">{{ p.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span></li>
     </ul>
-    <p class="note">Nenhuma fonte exige chave de API. Todo dado aqui é público e
-    gratuito, e cada arquivo baixado fica registrado com seu hash, para que qualquer
-    número possa ser rastreado até o arquivo de origem.</p>
+    <p class="note">Os links acima levam ao portal oficial de cada fonte, para
+    conferir qualquer número direto nela. Nenhuma fonte exige chave de API. Todo dado
+    aqui é público e gratuito, e cada arquivo baixado fica registrado com seu hash,
+    para que qualquer número possa ser rastreado até o arquivo de origem.</p>
   </section>
 
   <section>

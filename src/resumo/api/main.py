@@ -17,6 +17,7 @@ from resumo.api.deps import get_session
 from resumo.api.routers import candidates
 from resumo.config import get_settings
 from resumo.db.models import CandidatePhoto, GovernmentProposal
+from resumo.sources import source_portals
 from resumo.util import ano_range, brl
 
 _WEB = Path(__file__).resolve().parent.parent / "web"
@@ -139,7 +140,9 @@ def about(request: Request):
     nota de rodapé: quem lê "12 votos" precisa poder descobrir num clique que 96% das
     votações daquela Casa são simbólicas."""
     return templates.TemplateResponse(
-        request, "sobre.html", {"scope_label": _scope_label(_scope())}
+        request,
+        "sobre.html",
+        {"scope_label": _scope_label(_scope()), "fontes": source_portals()},
     )
 
 
