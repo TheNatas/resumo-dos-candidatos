@@ -24,7 +24,7 @@ uv run resumo scope     # imprime o escopo efetivo
 
 | Cargo (CD_CARGO) | Candidatura, bens, contas | Histórico de atuação |
 |---|---|---|
-| **Governador** (3) | ✅ + proposta de governo | ⛔ *não se aplica* — cargo executivo não tem votação nominal |
+| **Governador** (3) | ✅ + proposta de governo | ⚠️ **parcial** — atos perante a ALESC (ver ressalva) |
 | **Senador** (5) | ✅ (sem proposta — ver abaixo) | ✅ Senado Federal |
 | **Deputado federal** (6) | ✅ | ✅ Câmara dos Deputados |
 | **Deputado estadual** (7) | ✅ | ⚠️ **parcial** — ALESC (ver ressalva) |
@@ -50,6 +50,7 @@ Ampliar é trocar variáveis de ambiente: `RESUMO_TARGET_UFS=""` roda nacional,
 | **Câmara — portal (`camara.leg.br`)** | **frequência oficial em plenário** (dias e sessões, com faltas justificadas e não justificadas) | — |
 | **Senado Federal — dados abertos** | mandatos, votações, proposições, CEAPS, licenças | — |
 | **ALESC** (e-Legis + portal da transparência) | mandatos, votações nominais, proposições, presença, gastos de gabinete | — |
+| **ALESC — e-Legis `iniciativa=governador-do-estado`** | projetos de iniciativa do Executivo e mensagens de veto do governador | — |
 | **CGU — `EmendasParlamentares.zip`** | emendas parlamentares individuais (empenhado/liquidado/pago) | — |
 
 **Nenhuma fonte exige chave de API.** Para emendas isso foi uma escolha: a API do
@@ -64,6 +65,25 @@ programa e ação, que a API não devolve).
   registra a posição individual de cada deputado. Restam ~200–250 votos nominais em
   toda a legislatura, e o e-Legis não tem nada anterior a **fev/2023**. Números de
   votação **não são comparáveis** com os de deputados federais.
+- **Governador — histórico existe, mas é uma fatia do cargo.** Um cargo executivo não
+  tem votação nominal, presença em plenário nem cota de gabinete, e a ficha **não
+  desenha** esses contadores em vez de imprimir zeros (um "0 votos nominais" para um
+  governador afirmaria que ele faltou a tudo, e o leitor não teria como distinguir
+  isso de uma falha nossa). O que existe são os atos que ele assina perante a
+  Assembleia — projetos de iniciativa do Executivo e **mensagens de veto**, 510 no
+  mandato 2023-2026. Execução orçamentária, decretos, nomeações e programas de governo
+  ficam **fora**, e a interface diz isso onde o número aparece.
+- **O `ano` do e-Legis é ignorado na consulta do Executivo.** O coletor dos deputados
+  particiona o crawl com `?ano=`, e ali funciona; já
+  `?iniciativa=governador-do-estado&ano=2024` devolve as mesmas 10.552 linhas que
+  `&ano=2026` — todos os governos que o e-Legis guarda. A janela do mandato precisa ser
+  expressa em `inicio`/`fim`, e em **ISO**: `inicio=01/01/2023` não é só ignorado, ele
+  renderiza uma página vazia sem total nenhum. Ambos verificados na fonte.
+- **`iniciativa=governador-do-estado` é o CARGO, não a pessoa.** O e-Legis não sabe
+  quem o ocupava. A atribuição é por **data**: cada ato vai para o mandato cuja janela
+  contém sua entrada, e um ato fora de toda janela conhecida é descartado e contado —
+  nunca pendurado no governador mais próximo. Além disso, cada card precisa dizer
+  "Governador do Estado" em *Autoria* para ser aceito.
 - **Senado — 57% das votações da legislatura 57 são secretas.** Nelas o voto individual
   não é publicado (o campo vem como `"Votou"`); só os totais agregados existem. Por
   isso um senador tem *ordens de grandeza* menos votos nominais que um deputado
@@ -202,6 +222,13 @@ uv run resumo collect alesc-despesas     --anos 2025,2026
 uv run resumo collect alesc-votacoes     --inicio 2026-01-01 --fim 2026-08-18
 uv run resumo collect alesc-presenca     --inicio 2026-01-01 --fim 2026-08-18
 uv run resumo collect alesc-proposicoes  --anos 2026
+
+# 3a. Executivo — o mandato do governador em exercício e os atos que ele assinou.
+#     `executivo-governadores` NÃO usa rede: deriva o mandato do resultado do TSE
+#     (DS_SIT_TOT_TURNO=ELEITO em 2022) que o passo 1 já trouxe, então precisa dele.
+#     `executivo-atos` precisa do mandato já em base para atribuir os atos.
+uv run resumo collect executivo-governadores
+uv run resumo collect executivo-atos
 
 # 3b. Consolidação da frequência derivada (sem rede — lê o que já foi coletado).
 #     A Câmara NÃO passa por aqui: `attendance_record` só recebe presenças dela,

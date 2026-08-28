@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 
 app = typer.Typer(help="Plataforma de Transparência Eleitoral 2026", no_args_is_help=True)
 collect = typer.Typer(
-    help="Coletores idempotentes (TSE · Câmara · Senado · ALESC · emendas)",
+    help="Coletores idempotentes (TSE · Câmara · Senado · ALESC · Executivo · emendas)",
     no_args_is_help=True,
 )
 review = typer.Typer(help="Fila de revisão manual do vínculo candidato↔mandato", no_args_is_help=True)
@@ -379,6 +379,41 @@ def alesc_proposicoes(
         tracks=_split(tracks),
         limit=limit,
     )
+
+
+# ── Executivo (governadores em exercício) ─────────────────────────────────────
+@collect.command("executivo-governadores")
+def executivo_governadores(
+    year: Optional[int] = typer.Option(
+        None, help="Eleição que DEU posse (2022 para o ciclo 2026). Omitir = derivar."
+    ),
+    uf: Optional[str] = _UF_OPT,
+) -> None:
+    """Mandatos dos governadores em exercício, derivados do resultado do TSE.
+
+    Sem rede: lê as candidaturas ELEITO que `collect tse-candidates` já trouxe para a
+    eleição anterior. Rode-o antes, ou este comando devolve `empty`.
+    """
+    from resumo.ingestion.executivo.governadores import GovernadoresCollector
+
+    _run(GovernadoresCollector(), year=year, ufs=_split(uf))
+
+
+@collect.command("executivo-atos")
+def executivo_atos(
+    year: Optional[int] = typer.Option(
+        None, help="Eleição que DEU posse (2022 para o ciclo 2026). Omitir = derivar."
+    ),
+    max_pages: int = typer.Option(120, help="Guarda contra laço infinito na paginação."),
+) -> None:
+    """Projetos de iniciativa do Executivo e mensagens de veto (e-Legis, só SC).
+
+    Rode DEPOIS de `collect executivo-governadores`: os atos são atribuídos ao mandato
+    cuja janela contém a data de entrada, então precisa do mandato já em base.
+    """
+    from resumo.ingestion.executivo.atos import AtosCollector
+
+    _run(AtosCollector(), year=year, max_pages=max_pages)
 
 
 # ── Emendas parlamentares ─────────────────────────────────────────────────────

@@ -56,8 +56,12 @@
     </table>
 
   {% elif d.secao == 'proposicoes' %}
-    <p class="note">{{ d.rows|length }} proposição(ões) de autoria, da mais recente
-      para a mais antiga.</p>
+    {# "proposição de autoria" é o substantivo do parlamentar. O mesmo registro, num
+       mandato executivo, são os atos que o governador ENVIOU à Assembleia — e um
+       veto não é proposição de coisa alguma. #}
+    <p class="note">{{ d.rows|length }}
+      {% if d.is_legislative %}proposição(ões) de autoria{% else %}ato(s) apresentado(s)
+      à Assembleia{% endif %}, da mais recente para a mais antiga.</p>
     <table class="detalhe detalhe--{{ d.secao }}">
       <thead><tr><th>Código</th><th>Ementa</th><th>Entrada</th><th>Situação</th></tr></thead>
       <tbody>

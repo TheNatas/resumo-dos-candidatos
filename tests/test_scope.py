@@ -40,11 +40,17 @@ def test_history_availability_distinguishes_the_three_reasons():
     # A source exists and is collected.
     assert cargos.history_availability(cargos.DEPUTADO_FEDERAL) is A.available
     assert cargos.history_availability(cargos.SENADOR) is A.available
-    # Executive office: no legislative record exists at all.
-    assert cargos.history_availability(cargos.GOVERNADOR) is A.not_applicable
     # ALESC: collected, but ~96% of its votes are simbólicas (no individual
     # position recorded) and there is nothing before Feb 2023.
     assert cargos.history_availability(cargos.DEPUTADO_ESTADUAL) is A.partial
+    # An executive office with a collector: the acts a governor signs before the
+    # Assembly (bills of executive initiative, vetoes) ARE published and collected.
+    # `partial` because they are one real slice of governing and not the whole of it.
+    assert cargos.history_availability(cargos.GOVERNADOR) is A.partial
+    # The executive offices nothing reads stay not_applicable — "cargo executivo" is
+    # no longer a synonym for "no record", so the distinction has to be asserted.
+    assert cargos.history_availability(cargos.PREFEITO) is A.not_applicable
+    assert cargos.history_availability(cargos.PRESIDENTE) is A.not_applicable
     # Municipal chambers really have no source in this platform.
     assert cargos.history_availability(cargos.VEREADOR) is A.no_public_source
 
@@ -57,7 +63,8 @@ def test_history_availability_distinguishes_the_three_reasons():
     # A track record is rendered for available AND partial, never for the other two.
     assert cargos.shows_track_record(cargos.DEPUTADO_FEDERAL) is True
     assert cargos.shows_track_record(cargos.DEPUTADO_ESTADUAL) is True
-    assert cargos.shows_track_record(cargos.GOVERNADOR) is False
+    assert cargos.shows_track_record(cargos.GOVERNADOR) is True
+    assert cargos.shows_track_record(cargos.PREFEITO) is False
     assert cargos.shows_track_record(cargos.VEREADOR) is False
 
 

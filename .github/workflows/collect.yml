@@ -182,6 +182,10 @@ jobs:
           coletar uv run resumo collect camara-deputados
           coletar uv run resumo collect senado-senadores
           coletar uv run resumo collect alesc-deputados
+          # O governador em exercício. Sem rede: deriva o mandato do resultado do TSE
+          # já coletado acima, então tem de vir depois de `tse-candidates` do ciclo
+          # anterior (o laço de anos históricos logo acima).
+          coletar uv run resumo collect executivo-governadores
 
           # Votação antiga não muda, mas o coletor refazia o ano inteiro toda
           # execução: ~6.900 votações da Câmara mais duas chamadas cada, ~3 h de
@@ -217,6 +221,10 @@ jobs:
           coletar uv run resumo collect alesc-votacoes     --inicio "$DE_ALESC" --fim "$HOJE"
           coletar uv run resumo collect alesc-presenca     --inicio "$DE_ALESC" --fim "$HOJE"
           coletar uv run resumo collect alesc-proposicoes  --anos 2026
+          # Atos do Executivo perante a ALESC (projetos de iniciativa e vetos). A
+          # janela é a do mandato, não a incremental: são ~510 linhas em 51 páginas,
+          # e o upsert por id torna a repetição barata.
+          coletar uv run resumo collect executivo-atos
 
           # Consolidação da frequência derivada: lê o que os coletores acima gravaram,
           # sem rede. Depende deles, então roda por último. A Câmara não entra — a

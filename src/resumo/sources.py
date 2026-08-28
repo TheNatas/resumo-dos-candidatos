@@ -11,6 +11,9 @@ sites:
 Câmara proposição    ``/proposicoesWeb/fichadetramitacao?idProposicao=`` — ok.
 ALESC proposição     ``{e-Legis}/proposicoes/{hash}`` — ok (302 to
                      ``/tramitacoes``, which is the page a reader wants anyway).
+Ato do Executivo     Same e-Legis route: a bill of executive initiative and a
+                     mensagem de veto are filed at the Assembly like any other
+                     proposição and read back from the same URL.
 Senado proposição    **No link.** ``/web/atividade/materias/-/materia/{id}``
                      answers 200 "Pesquisas - Senado Federal" for a real id and
                      for ``SF0000000`` alike: a soft 404 that cannot be told
@@ -47,7 +50,10 @@ def proposition_url(house: House | None, proposition_id: str | None) -> str | No
             "https://www.camara.leg.br/proposicoesWeb/fichadetramitacao"
             f"?idProposicao={proposition_id}"
         )
-    if house is House.ASSEMBLEIA:
+    # Both of these are e-Legis rows: an act of executive initiative is filed at the
+    # Assembly like any other, and is read back from the same URL. They differ in who
+    # authored it, not in where it lives.
+    if house in (House.ASSEMBLEIA, House.EXECUTIVO):
         # Stored ids are prefixed to stay out of Câmara's numeric id space; e-Legis
         # wants the bare hashid back.
         bare = proposition_id.removeprefix(ALESC_ID_PREFIX)

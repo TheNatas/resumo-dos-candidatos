@@ -114,28 +114,47 @@
          nada sozinho — sem poder ver EM QUE se votou, o número não distingue um
          mandato de outro. O link só aparece quando há linhas para mostrar: um
          "ver →" que abre uma página vazia é pior que o número seco. #}
+      {# 🚨 Um mandato executivo não tem voto nominal, presença nem cota de gabinete —
+         e isso é uma propriedade do cargo, não uma lacuna de coleta. Imprimir "0
+         votos nominais" para um governador afirmaria que ele faltou a tudo, e o
+         leitor não teria como distinguir isso de uma falha nossa. Então os
+         contadores que não existem não são desenhados, e a seção diz por quê. #}
       <ul class="stats">
-        <li>
-          {% if t.votes_total %}<a href="{{ ficha }}/votos/">
-            <strong>{{ t.votes_total }}</strong><span>votos nominais</span></a>
-          {% else %}<strong>0</strong><span>votos nominais</span>{% endif %}
-        </li>
-        <li><strong>{{ t.votes_sim }}</strong><span>votos "Sim"</span></li>
+        {% if t.is_legislative %}
+          <li>
+            {% if t.votes_total %}<a href="{{ ficha }}/votos/">
+              <strong>{{ t.votes_total }}</strong><span>votos nominais</span></a>
+            {% else %}<strong>0</strong><span>votos nominais</span>{% endif %}
+          </li>
+          <li><strong>{{ t.votes_sim }}</strong><span>votos "Sim"</span></li>
+        {% endif %}
         <li>
           {% if t.propositions_total %}<a href="{{ ficha }}/proposicoes/">
-            <strong>{{ t.propositions_total }}</strong><span>proposições</span></a>
-          {% else %}<strong>0</strong><span>proposições</span>{% endif %}
+            <strong>{{ t.propositions_total }}</strong>
+            <span>{% if t.is_legislative %}proposições{% else %}projetos e vetos{% endif %}</span></a>
+          {% else %}<strong>0</strong>
+            <span>{% if t.is_legislative %}proposições{% else %}projetos e vetos{% endif %}</span>{% endif %}
         </li>
         {# O rótulo vem da Casa, não é fixo: "CEAP" é o nome da cota DA CÂMARA, e
            carimbá-lo sobre o total de um deputado estadual convida exatamente a
            comparação entre Casas que o resto da ficha recusa. #}
-        <li>
-          {% if e.count %}<a href="{{ ficha }}/gastos/">
-            <strong>{{ e.total|brl }}</strong>
-            <span>{{ e.label }}{% if e.anos %} · {{ e.anos|ano_range }}{% endif %}</span></a>
-          {% else %}<strong>{{ e.total|brl }}</strong><span>{{ e.label }}</span>{% endif %}
-        </li>
+        {% if t.is_legislative %}
+          <li>
+            {% if e.count %}<a href="{{ ficha }}/gastos/">
+              <strong>{{ e.total|brl }}</strong>
+              <span>{{ e.label }}{% if e.anos %} · {{ e.anos|ano_range }}{% endif %}</span></a>
+            {% else %}<strong>{{ e.total|brl }}</strong><span>{{ e.label }}</span>{% endif %}
+          </li>
+        {% endif %}
       </ul>
+      {% if not t.is_legislative %}
+        <p class="note">
+          Cada ato leva à sua tramitação no e-Legis da ALESC. São os projetos que o
+          governador enviou à Assembleia e as mensagens de veto que assinou — não
+          incluem decretos, execução orçamentária, nomeações ou programas de governo,
+          que têm outras fontes.
+        </p>
+      {% endif %}
 
       {# Um total de gastos sozinho não informa: sem janela o leitor assume o mandato
          inteiro, e sem régua não tem contra o que comparar. Nenhuma fonte ingerida
@@ -157,7 +176,14 @@
          dias E sessões e os dois números não batem de propósito, então aparecem lado
          a lado em vez de virarem um só. Nada é convertido de uma unidade para outra. #}
       {% set freq = t.attendance %}
-      {% if freq.available %}
+      {# A ausência de frequência tem duas causas muito diferentes, e o mesmo texto
+         para as duas seria falso numa delas: numa Casa legislativa falta o
+         denominador que a fonte não publica; num cargo executivo não há sessão a
+         que comparecer. Só a primeira é uma limitação de dado. #}
+      {% if not t.is_legislative %}
+        {# Nada a dizer aqui: o house_caveat abaixo já explica o cargo executivo, e
+           repetir a explicação em dois blocos seguidos só dilui. #}
+      {% elif freq.available %}
         <h3>Frequência</h3>
         {% for row in freq.rows %}
           <ul class="stats">
@@ -225,7 +251,9 @@
       {% endif %}
       {% if d.link.house_caveat %}
         <p class="no-source">
-          <strong>Sobre os números desta Casa.</strong><br>
+          {# "Casa" é substantivo de corpo legislativo; um governo estadual não é uma. #}
+          <strong>Sobre os números
+            {% if d.link.is_legislative %}desta Casa{% else %}deste mandato{% endif %}.</strong><br>
           {{ d.link.house_caveat }}
         </p>
       {% endif %}

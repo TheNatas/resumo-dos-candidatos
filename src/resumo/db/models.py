@@ -37,15 +37,40 @@ from resumo.db.session import Base
 
 # ── Enums ────────────────────────────────────────────────────────────────────
 class House(str, enum.Enum):
-    """A legislative body a mandate can be held in.
+    """The body a mandate is held in.
 
     ASSEMBLEIA is the generic state-assembly slot (ALESC for SC); the concrete state
     is carried by `Mandate.sigla_uf`, so the enum stays national.
+
+    🚨 EXECUTIVO is **not** a legislative house, and three of this enum's members
+    being legislatures is load-bearing everywhere else in the schema. It is the
+    generic state-executive slot (Governadoria for SC), and it exists because a
+    sitting governor demonstrably holds a mandate: without a row here, the platform
+    could only say "no accepted link", which reads to a reader as "not an incumbent"
+    — precisely the false negative the rest of the code works to avoid.
+
+    What it necessarily does NOT have, by nature and not by a collection gap:
+    `Vote` (an executive casts none), `AttendanceRecord` (no roll is called),
+    `MandateLeave` and `Expense` (no cota parlamentar exists to reimburse). Only
+    `Proposition` is populated, and it means something different there — see
+    `resumo.ingestion.executivo.atos`. Anything that fans out over `House` must
+    therefore ask what the office *can* publish, never assume the legislative shape.
     """
 
     CAMARA = "CAMARA"
     SENADO = "SENADO"
     ASSEMBLEIA = "ASSEMBLEIA"
+    EXECUTIVO = "EXECUTIVO"
+
+    @property
+    def is_legislative(self) -> bool:
+        """Whether roll-calls, attendance and a cota parlamentar exist for this body.
+
+        The predicate the ficha branches on. Written as a property rather than an
+        `is not EXECUTIVO` check at each call site so that adding a second executive
+        slot (prefeitura, presidência) stays a one-line change here.
+        """
+        return self is not House.EXECUTIVO
 
     @property
     def label(self) -> str:
@@ -54,6 +79,7 @@ class House(str, enum.Enum):
             House.CAMARA: "Câmara dos Deputados",
             House.SENADO: "Senado Federal",
             House.ASSEMBLEIA: "Assembleia Legislativa",
+            House.EXECUTIVO: "Governo do Estado",
         }[self]
 
     @property
@@ -65,11 +91,17 @@ class House(str, enum.Enum):
         regimes, three sets of rules, three different ceilings — printing "CEAP" over
         a state deputy's total invites exactly the cross-house comparison the rest of
         the ficha goes out of its way to refuse.
+
+        The executive has no such allowance at all — the state budget is not a
+        reimbursement of a member's office costs — so it gets a label that says so
+        instead of borrowing a legislative one. The ficha does not draw the counter
+        for an executive mandate (`is_legislative`), but a payload consumer might.
         """
         return {
             House.CAMARA: "CEAP (cota parlamentar)",
             House.SENADO: "CEAPS (cota parlamentar)",
             House.ASSEMBLEIA: "verba de gabinete e diárias",
+            House.EXECUTIVO: "não há cota parlamentar em cargo executivo",
         }[self]
 
 
@@ -293,8 +325,17 @@ class CandidatePhoto(Base):
 
 # ── Legislative side ─────────────────────────────────────────────────────────
 class Mandate(Base):
-    """A held legislative term (the 'exercício'). Source of truth: Câmara
-    /deputados (+ detail). `house` kept generic so Senado slots in later (S5)."""
+    """A held term (the 'exercício'). Source of truth: Câmara /deputados (+ detail)
+    for CAMARA, and the equivalent roster collector for every other `House`.
+
+    🚨 `id_legislatura` is a **legislature number** for the three legislative houses
+    (57 = Câmara/Senado 2023-2027, 20 = ALESC 2023-2027) but an executive term has no
+    legislature: for `House.EXECUTIVO` this column carries the **calendar year the
+    term began** (2023 for the 2023-2026 governorship). Both are integers that
+    partition the same person's successive terms, which is all the unique constraint
+    needs — but they are not the same vocabulary, so never compare the number across
+    houses or print it raw.
+    """
 
     __tablename__ = "mandate"
     __table_args__ = (UniqueConstraint("house", "house_member_id", "id_legislatura"),)

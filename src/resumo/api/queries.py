@@ -524,6 +524,14 @@ def expenses_payload(session: Session, mandate_id: uuid.UUID, house: House) -> d
 
 
 def track_record_summary(session: Session, mandate_id: uuid.UUID, house: House) -> dict:
+    """Os contadores do mandato. Todos são consultados; o que muda é o que a Casa
+    *pode* ter.
+
+    Para um mandato executivo os totais de voto, presença e cota vêm zerados porque
+    nada os alimenta — e é por isso que o payload carrega `is_legislative`. Zerar e
+    exibir seria afirmar que o governador faltou a todas as sessões; a ficha usa a
+    bandeira para não desenhar o contador, em vez de desenhar um zero enganoso.
+    """
     votes_total = session.scalar(
         select(func.count()).select_from(Vote).where(Vote.mandate_id == mandate_id)
     )
@@ -539,6 +547,7 @@ def track_record_summary(session: Session, mandate_id: uuid.UUID, house: House) 
     )
     expenses = expenses_payload(session, mandate_id, house)
     return {
+        "is_legislative": house.is_legislative,
         "votes_total": votes_total or 0,
         "votes_sim": votes_sim or 0,
         "propositions_total": props or 0,
@@ -742,14 +751,29 @@ TRACK_SECTIONS: dict[str, dict] = {
     "votos": {
         "titulo": "Votos nominais",
         "vazio": "Nenhum voto nominal registrado para este mandato.",
+        # 🚨 `so_legislativo` is not a display preference — it decides whether the URL
+        # exists at all. An executive holds no roll-call and draws no cota, so these
+        # pages would render "nenhum registro" forever, which reads as a collection
+        # failure rather than as a property of the office. `track_section` returns
+        # None for them, so both the live route and the static build skip the page
+        # instead of publishing an empty one.
+        "so_legislativo": True,
     },
     "proposicoes": {
         "titulo": "Proposições",
         "vazio": "Nenhuma proposição de autoria registrada para este mandato.",
+        "so_legislativo": False,
+        # The same table holds a very different act for an executive mandate: bills of
+        # executive initiative and mensagens de veto, not a member's own bills. Calling
+        # both "Proposições" would invite the cross-office comparison the ficha
+        # otherwise refuses. See `resumo.ingestion.executivo.atos`.
+        "titulo_executivo": "Projetos de iniciativa do Executivo e vetos",
+        "vazio_executivo": "Nenhum ato registrado perante a Assembleia neste mandato.",
     },
     "gastos": {
         "titulo": "Gastos de gabinete",
         "vazio": "Nenhum lançamento de gasto registrado para este mandato.",
+        "so_legislativo": True,
     },
 }
 
@@ -761,7 +785,8 @@ def track_section(session: Session, sq: str, secao: str) -> dict | None:
     a mostrar, e uma URL de detalhe não pode virar a porta dos fundos para um vínculo
     que a ficha se recusa a afirmar.
     """
-    if secao not in TRACK_SECTIONS:
+    spec = TRACK_SECTIONS.get(secao)
+    if spec is None:
         return None
     cand = get_candidacy(session, sq)
     if cand is None:
@@ -770,19 +795,25 @@ def track_section(session: Session, sq: str, secao: str) -> dict | None:
     if accepted is None:
         return None
     link, mandate = accepted
+    # A counter the office cannot have is not an empty page — it is no page. See
+    # `so_legislativo` in TRACK_SECTIONS.
+    if spec["so_legislativo"] and not mandate.house.is_legislative:
+        return None
     if secao == "votos":
         rows = votes_detail(session, mandate.id, mandate.house)
     elif secao == "proposicoes":
         rows = propositions_detail(session, mandate.id, mandate.house)
     else:
         rows = expenses_detail(session, mandate.id)
+    executivo = not mandate.house.is_legislative
     return {
         "secao": secao,
-        "titulo": TRACK_SECTIONS[secao]["titulo"],
-        "vazio": TRACK_SECTIONS[secao]["vazio"],
+        "titulo": spec.get("titulo_executivo", spec["titulo"]) if executivo else spec["titulo"],
+        "vazio": spec.get("vazio_executivo", spec["vazio"]) if executivo else spec["vazio"],
         "candidacy": _candidacy_summary(cand, incumbent_confirmed=True, has_photo=False),
         "house_label": mandate.house.label,
         "house_caveat": cargos.house_caveat(mandate.house),
+        "is_legislative": mandate.house.is_legislative,
         "expense_label": mandate.house.expense_label,
         "nome_parlamentar": mandate.nome_parlamentar,
         "rows": rows,
@@ -807,6 +838,11 @@ def candidate_detail(
             "confidence_tier": link.confidence_tier.value,
             "house": mandate.house.value,
             "house_label": mandate.house.label,
+            # Whether roll-calls, attendance and a cota parlamentar exist for this
+            # mandate at all. The ficha branches on it rather than printing zeros: "0
+            # votos nominais" for a governor is not a fact about the governor, it is a
+            # category error, and a reader has no way to tell it from a collection gap.
+            "is_legislative": mandate.house.is_legislative,
             "nome_parlamentar": mandate.nome_parlamentar,
             # A mandate can be held without being exercised — a senator licensed to
             # serve as governor still legally holds the seat, and the record is still

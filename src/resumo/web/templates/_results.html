@@ -24,13 +24,15 @@
            chamado de reeleição. É a distinção que a ficha faz com
            `link.same_office`; achatá-la aqui poria "tentando reeleição" em quem
            não está tentando. #}
+        {# "na {{ incumbent_house }}" só funciona para as três Casas legislativas;
+           "na Governo do Estado" não é português. O parêntese serve a todas. #}
         {% if c.incumbent_confirmed %}
           {% if c.reelection_same_office %}
             <span class="badge badge-mandato"
-                  title="Vínculo verificado com um mandato atual na {{ c.incumbent_house }} — o mesmo cargo que disputa.">tentando reeleição</span>
+                  title="Vínculo verificado com um mandato atual ({{ c.incumbent_house }}) — o mesmo cargo que disputa.">tentando reeleição</span>
           {% else %}
             <span class="badge badge-mandato"
-                  title="Vínculo verificado com um mandato atual na {{ c.incumbent_house }}, Casa diferente do cargo que disputa agora.">mandato atual · {{ c.incumbent_house }}</span>
+                  title="Vínculo verificado com um mandato atual ({{ c.incumbent_house }}), diferente do cargo que disputa agora.">mandato atual · {{ c.incumbent_house }}</span>
           {% endif %}
         {% endif %}
         {% if c.resultado %}<span class="badge">{{ c.resultado }}</span>{% endif %}
