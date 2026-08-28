@@ -420,12 +420,17 @@ def leaves_payload(session: Session, mandate_id: uuid.UUID) -> dict | None:
         return None
     dias = sum(att.leave_days(r.data_inicio, r.data_fim) or 0 for r in rows)
     tipos = Counter(r.descricao_tipo for r in rows if r.descricao_tipo)
+    primeira = min((r.data_inicio for r in rows if r.data_inicio), default=None)
+    ultima = max((r.data_fim for r in rows if r.data_fim), default=None)
     return {
         "count": len(rows),
         "dias": dias,
         "tipos": [{"descricao": nome, "count": n} for nome, n in tipos.most_common()],
-        "primeira": min((r.data_inicio for r in rows if r.data_inicio), default=None),
-        "ultima": max((r.data_fim for r in rows if r.data_fim), default=None),
+        # Strings ISO, não `date`: o mesmo dict vai para a API e para o JSON estático
+        # do site, e `json.dumps` não tem tipo de data. A ficha não imprime estes dois
+        # campos — quem os lê é a API.
+        "primeira": primeira.isoformat() if primeira else None,
+        "ultima": ultima.isoformat() if ultima else None,
     }
 
 

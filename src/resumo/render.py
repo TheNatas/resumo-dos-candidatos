@@ -28,7 +28,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import shutil
+import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -112,10 +114,32 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _json_default(o):
+    """Last resort for a value JSON has no type for.
+
+    The live API hands the same dicts to FastAPI, which converts dates and Decimals on
+    the way out; `json.dumps` does not. Without this the build is the only place that
+    breaks — and it breaks the day a field the API has always served happens to get
+    populated, which no test is watching for.
+    """
+    if isinstance(o, (dt.date, dt.datetime)):
+        return o.isoformat()
+    if isinstance(o, Decimal):
+        return float(o)
+    if isinstance(o, uuid.UUID):
+        return str(o)
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+
 def _write_json(path: Path, payload) -> None:
     # sort_keys + ensure_ascii=False: the build runs daily, and a stable, readable
     # serialization keeps a diff of two days' output meaningful.
-    _write(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    _write(
+        path,
+        json.dumps(
+            payload, ensure_ascii=False, indent=2, sort_keys=True, default=_json_default
+        ),
+    )
 
 
 def _prepare_out(out: Path, clean: bool) -> None:

@@ -376,6 +376,89 @@ def test_detail_listings_are_published_as_static_pages(session, tmp_path, _stora
     assert "CEAP" not in ficha
 
 
+def test_leave_dates_are_published_as_strings_not_dates(session, tmp_path, _storage):
+    """Uma licença com datas não pode derrubar o build.
+
+    `leaves_payload` só devolve datas quando há licença coletada, então o JSON estático
+    passou meses sem ver uma — e quebrou na noite em que a primeira chegou, sem que
+    nenhum commit tocasse no renderizador.
+    """
+    import datetime as dt
+
+    from resumo.db.models import (
+        CandidateMandateLink,
+        ConfidenceTier,
+        House,
+        Mandate,
+        MandateLeave,
+        MatchMethod,
+        Person,
+    )
+
+    person = Person(cpf="11144477735", nome_normalizado="MARIA DA SILVA")
+    session.add(person)
+    session.flush()
+    mandate = Mandate(
+        house=House.SENADO, house_member_id="4981", id_legislatura=57,
+        person_id=person.id, sigla_uf="SC", nome_parlamentar="Maria",
+    )
+    session.add(mandate)
+    session.flush()
+    session.add_all(
+        [
+            Candidacy(
+                sq_candidato="C1", ano_eleicao=2026, sg_uf="SC", cd_cargo=3,
+                ds_cargo="GOVERNADOR", nome_candidato="MARIA DA SILVA",
+                nome_urna="MARIA", nome_normalizado="MARIA DA SILVA",
+                sg_partido="PT", is_majoritario=True,
+            ),
+            CandidateMandateLink(
+                sq_candidato="C1", mandate_id=mandate.id, person_id=person.id,
+                match_method=MatchMethod.cpf_exact, confidence_score=1.0,
+                confidence_tier=ConfidenceTier.auto_strong,
+                is_incumbent_reelection=True, pipeline_version="test",
+            ),
+            MandateLeave(
+                mandate_id=mandate.id, house=House.SENADO, house_member_id="4981",
+                leave_id="1", data_inicio=dt.date(2025, 3, 1),
+                data_fim=dt.date(2025, 3, 10),
+                descricao_tipo="Licença para tratamento de saúde",
+            ),
+        ]
+    )
+    session.commit()
+
+    out = tmp_path / "site"
+    render_site(session, out=out, base_url="", site_url=None)
+
+    leaves = json.loads(
+        (out / "api" / "candidates" / "C1.json").read_text(encoding="utf-8")
+    )["track_record"]["leaves"]
+    assert leaves["primeira"] == "2025-03-01"
+    assert leaves["ultima"] == "2025-03-10"
+
+
+def test_json_writer_survives_a_type_json_has_no_tag_for(tmp_path):
+    """A rede de segurança do escritor: a API converte datas via FastAPI, o
+    `json.dumps` do build não — e um campo novo não pode derrubar o deploy."""
+    import datetime as dt
+    import uuid
+    from decimal import Decimal
+
+    from resumo.render import _write_json
+
+    path = tmp_path / "x.json"
+    _write_json(
+        path, {"d": dt.date(2025, 3, 1), "v": Decimal("1.5"), "i": uuid.UUID(int=1)}
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "d": "2025-03-01",
+        "v": 1.5,
+        "i": "00000000-0000-0000-0000-000000000001",
+    }
+
+
 def test_no_detail_pages_for_a_candidacy_without_a_confirmed_mandate(
     session, tmp_path, _storage
 ):
