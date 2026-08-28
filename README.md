@@ -73,6 +73,25 @@ programa e ação, que a API não devolve).
   `despesas/csv` é o empenho da instituição e **não tem coluna de deputado alguma**,
   então não é ingerido (fica registrado em `UNSUPPORTED_DATASETS` com o motivo, em vez
   de ser atribuído por adivinhação).
+- **ALESC — o `iniciativa` do e-Legis é um vocabulário próprio, e o filtro falha em
+  silêncio.** `Mandate.house_member_id` guarda o slug do perfil no WordPress
+  (`profa-vanessa-da-rosa`); o e-Legis quer o dele (`vanessa-da-rosa`), e os dois
+  divergem para ~1 deputado em 9. O problema não é a divergência: é que
+  `?iniciativa=<valor-desconhecido>` devolve **exatamente a mesma coisa que não mandar
+  filtro nenhum** — a Casa inteira. Sem defesa, as 538 PLs de 2026 de quarenta autores
+  viravam autoria de uma deputada só. O valor é resolvido antes da coleta, contra o
+  `<select>` que o próprio e-Legis publica (igualdade de slug, depois nome único), e
+  quem não resolve **não é coletado**; além disso, toda resposta idêntica à consulta
+  sem filtro é recusada em tempo de execução. Ver `resolve_iniciativa`.
+- **Gasto de gabinete da ALESC não é CEAP.** CEAP é o nome da cota **da Câmara**; o do
+  Senado é CEAPS; e as linhas da ALESC são verba de gabinete somada a diárias. Três
+  regimes, três tetos, e a ficha usa o nome de cada Casa (`House.expense_label`).
+- **Nenhuma fonte aberta ingerida publica teto de gasto.** O total exibido é o que foi
+  reembolsado, nunca uma fração de uma cota — a Câmara divulga a cota mensal por UF
+  fora da API, e o portal da ALESC não divulga limite para estas rubricas. Como régua
+  a ficha usa a **mediana da própria Casa na mesma janela**, que sai do dado já
+  coletado, e mostra ao lado do total os **anos efetivamente cobertos**: sem isso o
+  leitor assume o mandato inteiro.
 - **Nem toda linha de despesa da ALESC casa com um deputado.** O portal usa o nome
   civil (`CARLOS HENRIQUE LIMA`) e o e-Legis o nome parlamentar (`Sargento Lima`).
   Quando o casamento não é exato, a linha fica **sem atribuição e é registrada em log**

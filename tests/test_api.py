@@ -4,6 +4,7 @@ import datetime as dt
 import re
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from resumo.api.main import app
 from resumo.db.models import (
@@ -120,6 +121,42 @@ def test_page_filters_by_partido(session):
     filtered = client.get("/", params={"partido": "PT"}).text
     assert "JOSE" in filtered
     assert "ANA PEREIRA" not in filtered
+
+
+def test_card_flags_confirmed_incumbent(session):
+    _seed_incumbent(session)
+    # A candidacy for another office, linked to the SAME Câmara mandate: holds a
+    # current mandate, is not seeking re-election.
+    session.add(
+        Candidacy(
+            sq_candidato="C3", ano_eleicao=2026, sg_uf="SC", cd_cargo=3, ds_cargo="GOVERNADOR",
+            nome_candidato="CARLOS SOUZA", nome_normalizado="CARLOS SOUZA", sg_partido="PL",
+        )
+    )
+    session.add(
+        CandidateMandateLink(
+            sq_candidato="C3", mandate_id=session.query(Mandate).one().id,
+            person_id=session.query(Person).one().id,
+            match_method=MatchMethod.cpf_exact, confidence_score=1.0,
+            confidence_tier=ConfidenceTier.auto_strong, is_incumbent_reelection=True,
+            pipeline_version="test",
+        )
+    )
+    session.commit()
+
+    listed = {c["sq_candidato"]: c for c in client.get("/api/candidates").json()}
+    assert listed["C1"]["reelection_same_office"] is True
+    assert listed["C1"]["incumbent_house"] == "Câmara dos Deputados"
+    assert listed["C3"]["incumbent_confirmed"] is True
+    assert listed["C3"]["reelection_same_office"] is False
+    assert listed["C2"]["incumbent_house"] is None
+
+    # A home só lista com algum filtro; o de reeleição traz exatamente os dois.
+    page = client.get("/", params={"reeleicao": "sim"}).text
+    assert "tentando reeleição" in page
+    # O governador com mandato na Câmara aparece nomeado, nunca como reeleição.
+    assert "mandato atual · Câmara dos Deputados" in page
+    assert page.count("tentando reeleição") == 1
 
 
 def test_api_filters_by_partido(session):
@@ -392,3 +429,189 @@ def test_detail_reports_a_missing_photo_as_null(session):
     assert detail["candidacy"]["foto_url"] is None
     # As iniciais existem sempre — é o que a página desenha no lugar da foto.
     assert detail["candidacy"]["iniciais"] == "JS"
+
+
+def _seed_assembleia(session, *, totals: list[float], anos=(2025, 2026)):
+    """One ALESC mandate holding `totals[0]`, plus peers for the median.
+
+    ALESC on purpose: the label bug this guards was invisible on a Câmara mandate,
+    where "CEAP" happens to be the right word.
+    """
+    mandates = []
+    for i, total in enumerate(totals):
+        person = Person(cpf=f"9999999990{i}", nome_normalizado=f"DEP {i}", nome_civil=f"DEP {i}")
+        session.add(person)
+        session.flush()
+        mandate = Mandate(
+            house=House.ASSEMBLEIA, house_member_id=f"a{i}", id_legislatura=20,
+            person_id=person.id, sigla_uf="SC", nome_parlamentar=f"DEP {i}",
+        )
+        session.add(mandate)
+        session.flush()
+        mandates.append(mandate)
+        # Split across the years so the window shown is derived, not assumed.
+        for j, ano in enumerate(anos):
+            session.add(
+                Expense(
+                    mandate_id=mandate.id, house=House.ASSEMBLEIA, house_member_id=f"a{i}",
+                    ano=ano, mes=1, tipo_despesa="DIÁRIAS" if j else "PASSAGENS",
+                    valor_liquido=total / len(anos), cod_documento=f"D{i}{j}",
+                    num_documento=f"N{i}{j}", row_hash=f"ah{i}{j}",
+                )
+            )
+    session.add(
+        Candidacy(
+            sq_candidato="A1", ano_eleicao=2026, sg_uf="SC", cd_cargo=7,
+            ds_cargo="DEPUTADO ESTADUAL", nome_candidato="DEP 0", nome_normalizado="DEP 0",
+            sg_partido="PT",
+        )
+    )
+    session.add(
+        CandidateMandateLink(
+            sq_candidato="A1", mandate_id=mandates[0].id, person_id=mandates[0].person_id,
+            match_method=MatchMethod.cpf_exact, confidence_score=1.0,
+            confidence_tier=ConfidenceTier.auto_strong, is_incumbent_reelection=True,
+            pipeline_version="test",
+        )
+    )
+    session.commit()
+    return mandates
+
+
+def test_expense_label_follows_the_house_not_the_camara(session):
+    """A state deputy's gabinete spending is not CEAP — CEAP is the Câmara's cota."""
+    _seed_assembleia(session, totals=[900.0, 500.0, 100.0])
+    e = client.get("/api/candidates/A1").json()["track_record"]["expenses"]
+
+    assert e["label"] == "verba de gabinete e diárias"
+    assert "CEAP" not in e["label"]
+    assert House.CAMARA.expense_label.startswith("CEAP")
+    assert House.SENADO.expense_label.startswith("CEAPS")
+
+    html = client.get("/candidato/A1").text
+    assert "verba de gabinete e diárias" in html
+    assert "CEAP" not in html
+
+
+def test_expense_total_carries_its_window_and_a_peer_ruler(session):
+    """The total is meaningless bare: it needs the years it covers and something to
+    compare against. No source publishes a ceiling, so the ruler is the house median."""
+    _seed_assembleia(session, totals=[900.0, 500.0, 100.0])
+    e = client.get("/api/candidates/A1").json()["track_record"]["expenses"]
+
+    assert e["total"] == 900.0
+    assert e["anos"] == [2025, 2026]
+    assert e["count"] == 2
+    # Median of 100/500/900 is 500; 900 is above it.
+    assert e["peer"] == {"n": 3, "median": 500.0, "max": 900.0, "above_median": True}
+    # The ficha must never imply a ceiling it did not ingest.
+    assert "não uma fração de uma cota" in e["quota_note"]
+
+    html = client.get("/candidato/A1").text
+    assert "2025–2026" in html
+    assert "não necessariamente o mandato inteiro" in html
+    assert "Acima da mediana da Casa" in html
+
+
+def test_peer_ruler_withheld_when_there_are_too_few_peers(session):
+    """With two mandates a 'median' is noise wearing a statistic's clothes."""
+    _seed_assembleia(session, totals=[900.0, 100.0])
+    e = client.get("/api/candidates/A1").json()["track_record"]["expenses"]
+    assert e["peer"] is None
+    assert "mediana da Casa" not in client.get("/candidato/A1").text
+
+
+def test_money_is_formatted_for_a_brazilian_reader(session):
+    _seed_incumbent(session)
+    assert "R$ 100,00" in client.get("/candidato/C1").text
+    from resumo.util import brl
+
+    assert brl(926077.54) == "R$ 926.077,54"
+    assert brl(0) == "R$ 0,00"
+    assert brl(None) == "—"
+    # Refunds are negative in the ALESC source and must not lose their sign.
+    assert brl(-539.0) == "R$ -539,00"
+
+
+# ── Detalhe por trás dos contadores ──────────────────────────────────────────
+def test_counters_link_to_the_listing_that_backs_them(session):
+    """Um contador sem listagem não afirma nada: 12 votos de quem, em quê?"""
+    _seed_incumbent(session)
+    html = client.get("/candidato/C1").text
+
+    assert '/candidato/C1/votos/' in html
+    assert '/candidato/C1/gastos/' in html
+    # Zero proposições: o link levaria a uma página vazia, então não existe.
+    assert '/candidato/C1/proposicoes/' not in html
+
+
+def test_vote_listing_shows_what_was_voted_on_and_the_party_line(session):
+    """O que torna um voto legível é a orientação ao lado dele."""
+    _seed_incumbent(session)
+    mandate = session.scalar(select(Mandate))
+    session.add_all(
+        [
+            Vote(mandate_id=mandate.id, house_member_id="1", id_votacao="V3",
+                 id_proposicao="2471267", tipo_voto="Sim", orientacao_partido="Sim",
+                 data_votacao=dt.date(2024, 5, 1)),
+            Vote(mandate_id=mandate.id, house_member_id="1", id_votacao="V4",
+                 id_proposicao="2471268", tipo_voto="Não", orientacao_partido="Sim",
+                 data_votacao=dt.date(2024, 5, 2)),
+        ]
+    )
+    session.commit()
+
+    rows = client.get("/api/candidates/C1").json()  # gate is the same one
+    assert rows["incumbent_confirmed"] is True
+
+    html = client.get("/candidato/C1/votos").text
+    assert "divergiu" in html and "seguiu" in html
+    # A matéria vira link para a ficha de tramitação da Câmara.
+    assert "fichadetramitacao?idProposicao=2471267" in html
+
+
+def test_expense_listing_keeps_the_glosa_and_the_refund_sign(session):
+    """Glosa é o que a Casa recusou pagar, e devolução vem negativa na fonte."""
+    _seed_incumbent(session)
+    mandate = session.scalar(select(Mandate))
+    session.add_all(
+        [
+            Expense(mandate_id=mandate.id, house_member_id="1", ano=2024, mes=4,
+                    tipo_despesa="PASSAGENS", nome_fornecedor="AZUL",
+                    valor_liquido=800.0, valor_glosa=50.0, cod_documento="D2",
+                    num_documento="N2", row_hash="h2",
+                    url_documento="https://camara.leg.br/recibo/2"),
+            Expense(mandate_id=mandate.id, house_member_id="1", ano=2024, mes=5,
+                    tipo_despesa="DIÁRIAS", nome_fornecedor="DEVOLUÇÃO",
+                    valor_liquido=-539.0, cod_documento="D3", num_documento="N3",
+                    row_hash="h3"),
+        ]
+    )
+    session.commit()
+
+    html = client.get("/candidato/C1/gastos").text
+    assert "R$ 50,00" in html              # glosa exibida, não somada nem escondida
+    assert "R$ -539,00" in html            # devolução mantém o sinal
+    assert "https://camara.leg.br/recibo/2" in html
+
+
+def test_detail_pages_apply_the_same_incumbency_gate_as_the_ficha(session):
+    """A URL de detalhe não pode ser a porta dos fundos para um vínculo não aceito."""
+    _seed_incumbent(session)
+    assert client.get("/candidato/C2/votos").status_code == 404
+    assert client.get("/candidato/C1/secao-inventada").status_code == 404
+    assert client.get("/candidato/NAO-EXISTE/votos").status_code == 404
+
+
+def test_no_link_is_built_for_sources_that_soft_404(session):
+    """Um link que cai numa página de busca gasta a confiança do leitor e não entrega
+    nada — pior que não linkar. Ver `resumo.sources`."""
+    from resumo.db.models import House
+    from resumo.sources import proposition_url
+
+    assert "fichadetramitacao" in proposition_url(House.CAMARA, "2471267")
+    assert proposition_url(House.ASSEMBLEIA, "AL574R6").endswith("/proposicoes/574R6")
+    # O Senado responde 200 "Pesquisas - Senado Federal" para id válido e inválido.
+    assert proposition_url(House.SENADO, "SF7720308") is None
+    assert proposition_url(None, "x") is None
+    assert proposition_url(House.CAMARA, None) is None

@@ -56,6 +56,22 @@ class House(str, enum.Enum):
             House.ASSEMBLEIA: "Assembleia Legislativa",
         }[self]
 
+    @property
+    def expense_label(self) -> str:
+        """What THIS house calls the office-expense allowance.
+
+        Not cosmetic. "CEAP" is the *Câmara's* name for its own cota; the Senado's is
+        CEAPS; and the ALESC lines are verba de gabinete somada a diárias. Three
+        regimes, three sets of rules, three different ceilings — printing "CEAP" over
+        a state deputy's total invites exactly the cross-house comparison the rest of
+        the ficha goes out of its way to refuse.
+        """
+        return {
+            House.CAMARA: "CEAP (cota parlamentar)",
+            House.SENADO: "CEAPS (cota parlamentar)",
+            House.ASSEMBLEIA: "verba de gabinete e diárias",
+        }[self]
+
 
 class AttendanceUnit(str, enum.Enum):
     """The ruler a source counts attendance in — and therefore the one we display.

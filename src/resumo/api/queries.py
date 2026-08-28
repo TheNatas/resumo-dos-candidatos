@@ -24,7 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from resumo import attendance as att
-from resumo import cargos
+from resumo import cargos, sources
 from resumo.db.models import (
     AccountFiling,
     AmendmentType,
@@ -39,6 +39,7 @@ from resumo.db.models import (
     ConfidenceTier,
     Expense,
     GovernmentProposal,
+    House,
     Mandate,
     MandateLeave,
     Proposition,
@@ -64,6 +65,24 @@ _CONFIRMED_REELECTION = (
 )
 
 
+# Which house the confirmed mandate sits in — the same link `get_accepted_link`
+# picks (accepted tier, highest score), so a card and the ficha never name different
+# mandates. NULL here is exactly `_CONFIRMED_REELECTION` being false.
+_INCUMBENT_HOUSE = (
+    select(Mandate.house)
+    .select_from(CandidateMandateLink)
+    .join(Mandate, CandidateMandateLink.mandate_id == Mandate.id)
+    .where(
+        CandidateMandateLink.sq_candidato == Candidacy.sq_candidato,
+        CandidateMandateLink.is_incumbent_reelection.is_(True),
+        CandidateMandateLink.confidence_tier.in_(ACCEPTED_TIERS),
+    )
+    .order_by(CandidateMandateLink.confidence_score.desc())
+    .limit(1)
+    .scalar_subquery()
+)
+
+
 # Same shape as `_CONFIRMED_REELECTION`: a listing needs to know whether each row
 # has a face without one query per card.
 _HAS_PHOTO = (
@@ -86,7 +105,10 @@ def search_candidacies(
     limit: int = 50,
 ) -> list[dict]:
     stmt = select(
-        Candidacy, _CONFIRMED_REELECTION.label("incumbent"), _HAS_PHOTO.label("has_photo")
+        Candidacy,
+        _CONFIRMED_REELECTION.label("incumbent"),
+        _HAS_PHOTO.label("has_photo"),
+        _INCUMBENT_HOUSE.label("incumbent_house"),
     )
     if q:
         # Accent-insensitive substring match on the normalized name (trgm index).
@@ -105,8 +127,10 @@ def search_candidacies(
         stmt = stmt.where(Candidacy.ano_eleicao == year)
     stmt = stmt.order_by(Candidacy.nome_candidato).limit(limit)
     return [
-        _candidacy_summary(c, incumbent_confirmed=incumbent, has_photo=has_photo)
-        for c, incumbent, has_photo in session.execute(stmt)
+        _candidacy_summary(
+            c, incumbent_confirmed=incumbent, has_photo=has_photo, incumbent_house=house
+        )
+        for c, incumbent, has_photo, house in session.execute(stmt)
     ]
 
 
@@ -124,7 +148,10 @@ def candidacies_in_scope(
     scoped query, never whatever a search box happened to ask for.
     """
     stmt = select(
-        Candidacy, _CONFIRMED_REELECTION.label("incumbent"), _HAS_PHOTO.label("has_photo")
+        Candidacy,
+        _CONFIRMED_REELECTION.label("incumbent"),
+        _HAS_PHOTO.label("has_photo"),
+        _INCUMBENT_HOUSE.label("incumbent_house"),
     ).where(Candidacy.ano_eleicao == year)
     if ufs:
         stmt = stmt.where(Candidacy.sg_uf.in_([u.upper() for u in ufs]))
@@ -132,8 +159,10 @@ def candidacies_in_scope(
         stmt = stmt.where(Candidacy.cd_cargo.in_(list(cargo_codes)))
     stmt = stmt.order_by(Candidacy.nome_candidato, Candidacy.sq_candidato)
     return [
-        _candidacy_summary(c, incumbent_confirmed=incumbent, has_photo=has_photo)
-        for c, incumbent, has_photo in session.execute(stmt)
+        _candidacy_summary(
+            c, incumbent_confirmed=incumbent, has_photo=has_photo, incumbent_house=house
+        )
+        for c, incumbent, has_photo, house in session.execute(stmt)
     ]
 
 
@@ -400,7 +429,96 @@ def leaves_payload(session: Session, mandate_id: uuid.UUID) -> dict | None:
     }
 
 
-def track_record_summary(session: Session, mandate_id: uuid.UUID) -> dict:
+def expenses_payload(session: Session, mandate_id: uuid.UUID, house: House) -> dict:
+    """Gastos de gabinete do mandato — o total, o que ele cobre e contra o que comparar.
+
+    Um total sozinho não informa nada. "R$ 926.077,54" só vira informação com três
+    coisas ao lado, e nenhuma delas é opcional:
+
+    * **O nome certo.** Ver :attr:`~resumo.db.models.House.expense_label`.
+    * **A janela.** O total é a soma do que foi *coletado*, não do mandato inteiro —
+      os anos vêm do próprio dado (``ano`` distinto), então a ficha nunca afirma
+      cobertura que não tem. Quem lê um número sem janela assume o mandato todo.
+    * **Uma régua.** Contra o que 926 mil é muito ou pouco?
+
+    Sobre a régua: **nenhuma fonte ingerida publica teto de gasto.** A Câmara divulga
+    a cota mensal por UF, mas fora da API — e o portal da ALESC não publica limite
+    algum para estas rubricas (o valor de ~R$ 111 mil que circula é a verba de
+    *pessoal*, para salários de secretários, que não é o que estas linhas medem).
+    Cravar um denominador aqui seria inventar a parte mais importante da conta. Então
+    a régua é a única que sai do dado que já temos: a **mediana da própria Casa na
+    mesma janela** — comparação entre pares, sem afirmar teto nenhum.
+    """
+    rows = list(
+        session.execute(
+            select(
+                Expense.tipo_despesa,
+                func.count().label("n"),
+                func.coalesce(func.sum(Expense.valor_liquido), 0).label("total"),
+            )
+            .where(Expense.mandate_id == mandate_id)
+            .group_by(Expense.tipo_despesa)
+            .order_by(func.coalesce(func.sum(Expense.valor_liquido), 0).desc())
+        )
+    )
+    total = float(sum(r.total for r in rows))
+    count = int(sum(r.n for r in rows))
+    anos = [
+        a
+        for (a,) in session.execute(
+            select(Expense.ano).where(Expense.mandate_id == mandate_id).distinct().order_by(Expense.ano)
+        )
+    ]
+
+    # Mediana entre os pares da MESMA Casa: um deputado estadual não se compara a um
+    # federal (regimes e rubricas diferentes), e a janela ingerida é a mesma para todos
+    # os mandatos de uma Casa, então a comparação é entre iguais.
+    peer_totals = [
+        float(t)
+        for (t,) in session.execute(
+            select(func.coalesce(func.sum(Expense.valor_liquido), 0))
+            .join(Mandate, Mandate.id == Expense.mandate_id)
+            .where(Mandate.house == house)
+            .group_by(Expense.mandate_id)
+        )
+    ]
+    peer = None
+    # Com menos de 3 pares a "mediana" é ruído com cara de estatística.
+    if len(peer_totals) >= 3:
+        ordered = sorted(peer_totals)
+        mid = len(ordered) // 2
+        median = (
+            ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+        )
+        peer = {
+            "n": len(ordered),
+            "median": median,
+            "max": ordered[-1],
+            # Acima ou abaixo da mediana — não um ranking. Quem assumiu no meio da
+            # janela ou se licenciou gasta menos sem que isso diga nada sobre gestão,
+            # e um "12º lugar" leria como placar.
+            "above_median": total > median,
+        }
+
+    return {
+        "total": total,
+        "count": count,
+        "anos": anos,
+        "label": house.expense_label,
+        "by_tipo": [
+            {"tipo": r.tipo_despesa or "—", "count": int(r.n), "total": float(r.total)}
+            for r in rows
+        ],
+        "peer": peer,
+        "quota_note": (
+            "Nenhuma fonte aberta ingerida publica o teto de gasto desta Casa, então "
+            "este valor é o que foi efetivamente reembolsado — não uma fração de uma "
+            "cota. A comparação ao lado é entre pares da mesma Casa, na mesma janela."
+        ),
+    }
+
+
+def track_record_summary(session: Session, mandate_id: uuid.UUID, house: House) -> dict:
     votes_total = session.scalar(
         select(func.count()).select_from(Vote).where(Vote.mandate_id == mandate_id)
     )
@@ -414,16 +532,16 @@ def track_record_summary(session: Session, mandate_id: uuid.UUID) -> dict:
             Proposition.authoring_mandate_id == mandate_id
         )
     )
-    expense_total = session.scalar(
-        select(func.coalesce(func.sum(Expense.valor_liquido), 0)).where(
-            Expense.mandate_id == mandate_id
-        )
-    )
+    expenses = expenses_payload(session, mandate_id, house)
     return {
         "votes_total": votes_total or 0,
         "votes_sim": votes_sim or 0,
         "propositions_total": props or 0,
-        "expense_total": float(expense_total or 0),
+        # Mantido como estava para não quebrar quem já consome a API; o detalhe (nome
+        # correto da rubrica, janela coberta, comparação entre pares) vive em
+        # `expenses`, porque o total sozinho não é interpretável.
+        "expense_total": expenses["total"],
+        "expenses": expenses,
         "attendance": attendance_payload(session, mandate_id),
         "leaves": leaves_payload(session, mandate_id),
     }
@@ -525,6 +643,147 @@ def amendments_summary(session: Session, mandate_id: uuid.UUID) -> dict:
     }
 
 
+# ── Detalhe por trás de cada número da ficha ─────────────────────────────────
+# "12 votos nominais" e "59 proposições" não afirmam nada sozinhos: sem poder ver EM
+# QUE se votou, o número não distingue um mandato de outro. Cada contador da ficha
+# aponta para a listagem que o sustenta, e as listagens saem das mesmas linhas que já
+# foram coletadas — nada aqui é buscado de novo, só deixou de ser descartado.
+
+
+def votes_detail(session: Session, mandate_id: uuid.UUID, house: House) -> list[dict]:
+    """Cada voto nominal do mandato, do mais recente para o mais antigo."""
+    rows = session.execute(
+        select(Vote)
+        .where(Vote.mandate_id == mandate_id)
+        .order_by(Vote.data_votacao.desc().nullslast(), Vote.id_votacao)
+    ).scalars()
+    out = []
+    for v in rows:
+        # A orientação do partido é o que torna o voto legível: sozinho, "Sim" não
+        # diz se o parlamentar seguiu a bancada ou rompeu com ela. A ALESC não publica
+        # orientação para votação nenhuma, então lá a coluna fica vazia — e vazia é
+        # diferente de "votou com o partido".
+        seguiu = None
+        if v.orientacao_partido and v.tipo_voto:
+            seguiu = v.orientacao_partido.strip().lower() == v.tipo_voto.strip().lower()
+        out.append(
+            {
+                "data": v.data_votacao,
+                "id_votacao": v.id_votacao,
+                "tipo_voto": v.tipo_voto,
+                "orientacao_partido": v.orientacao_partido,
+                "seguiu_orientacao": seguiu,
+                "proposicao_id": v.id_proposicao,
+                "proposicao_url": sources.proposition_url(house, v.id_proposicao),
+            }
+        )
+    return out
+
+
+def propositions_detail(session: Session, mandate_id: uuid.UUID, house: House) -> list[dict]:
+    """Cada proposição de autoria do mandato, da mais recente para a mais antiga."""
+    rows = session.execute(
+        select(Proposition)
+        .where(Proposition.authoring_mandate_id == mandate_id)
+        .order_by(
+            Proposition.data_apresentacao.desc().nullslast(),
+            Proposition.ano.desc().nullslast(),
+            Proposition.numero.desc().nullslast(),
+        )
+    ).scalars()
+    return [
+        {
+            "id": p.proposition_id,
+            "codigo": " ".join(
+                part for part in (p.sigla_tipo, str(p.numero or ""), str(p.ano or "")) if part
+            ).strip()
+            or p.proposition_id,
+            "ementa": p.ementa,
+            "situacao": p.situacao,
+            "data": p.data_apresentacao,
+            "url": sources.proposition_url(house, p.proposition_id),
+        }
+        for p in rows
+    ]
+
+
+def expenses_detail(session: Session, mandate_id: uuid.UUID) -> list[dict]:
+    """Cada lançamento de gasto de gabinete, do mais recente para o mais antigo."""
+    rows = session.execute(
+        select(Expense)
+        .where(Expense.mandate_id == mandate_id)
+        .order_by(Expense.ano.desc(), Expense.mes.desc().nullslast(), Expense.id)
+    ).scalars()
+    return [
+        {
+            "ano": e.ano,
+            "mes": e.mes,
+            "tipo": e.tipo_despesa,
+            "fornecedor": e.nome_fornecedor,
+            "cnpj_cpf": e.cnpj_cpf_fornecedor,
+            "valor_liquido": float(e.valor_liquido or 0),
+            # Glosa é o que a Casa recusou reembolsar. Some-la ao líquido ou escondê-la
+            # apagaria a única pista de que a despesa foi contestada.
+            "valor_glosa": float(e.valor_glosa or 0),
+            "documento_url": e.url_documento,
+        }
+        for e in rows
+    ]
+
+
+# Uma seção = um contador da ficha. O registro é único para que rota, renderizador
+# estático e template não possam divergir sobre quais páginas existem.
+TRACK_SECTIONS: dict[str, dict] = {
+    "votos": {
+        "titulo": "Votos nominais",
+        "vazio": "Nenhum voto nominal registrado para este mandato.",
+    },
+    "proposicoes": {
+        "titulo": "Proposições",
+        "vazio": "Nenhuma proposição de autoria registrada para este mandato.",
+    },
+    "gastos": {
+        "titulo": "Gastos de gabinete",
+        "vazio": "Nenhum lançamento de gasto registrado para este mandato.",
+    },
+}
+
+
+def track_section(session: Session, sq: str, secao: str) -> dict | None:
+    """Uma listagem de detalhe, ou None quando a seção ou a candidatura não existem.
+
+    Passa pelo MESMO portão de `candidate_detail`: sem vínculo aceito não há histórico
+    a mostrar, e uma URL de detalhe não pode virar a porta dos fundos para um vínculo
+    que a ficha se recusa a afirmar.
+    """
+    if secao not in TRACK_SECTIONS:
+        return None
+    cand = get_candidacy(session, sq)
+    if cand is None:
+        return None
+    accepted = get_accepted_link(session, sq)
+    if accepted is None:
+        return None
+    link, mandate = accepted
+    if secao == "votos":
+        rows = votes_detail(session, mandate.id, mandate.house)
+    elif secao == "proposicoes":
+        rows = propositions_detail(session, mandate.id, mandate.house)
+    else:
+        rows = expenses_detail(session, mandate.id)
+    return {
+        "secao": secao,
+        "titulo": TRACK_SECTIONS[secao]["titulo"],
+        "vazio": TRACK_SECTIONS[secao]["vazio"],
+        "candidacy": _candidacy_summary(cand, incumbent_confirmed=True, has_photo=False),
+        "house_label": mandate.house.label,
+        "house_caveat": cargos.house_caveat(mandate.house),
+        "expense_label": mandate.house.expense_label,
+        "nome_parlamentar": mandate.nome_parlamentar,
+        "rows": rows,
+    }
+
+
 def candidate_detail(
     session: Session, sq: str, *, include_storage_path: bool = False
 ) -> dict | None:
@@ -555,7 +814,7 @@ def candidate_detail(
             # False is normal and interesting: a deputado federal running for senador.
             "same_office": cargos.house_for(cand.cd_cargo) is mandate.house,
         }
-        track = track_record_summary(session, mandate.id)
+        track = track_record_summary(session, mandate.id, mandate.house)
         amendments = amendments_summary(session, mandate.id)
     photo = get_photo(session, sq)
     proposals = get_proposals(session, sq)
@@ -600,7 +859,11 @@ def candidate_detail(
 
 
 def _candidacy_summary(
-    c: Candidacy, *, incumbent_confirmed: bool, has_photo: bool = False
+    c: Candidacy,
+    *,
+    incumbent_confirmed: bool,
+    has_photo: bool = False,
+    incumbent_house: House | None = None,
 ) -> dict:
     return {
         "sq_candidato": c.sq_candidato,
@@ -619,6 +882,16 @@ def _candidacy_summary(
         "situacao": c.ds_situacao_candidatura,
         # Gated exactly like the ficha's track record: never a guessed link.
         "incumbent_confirmed": bool(incumbent_confirmed),
+        # Which house that mandate sits in, and whether it is the office THIS candidacy
+        # disputes. Not the same claim: an accepted link only says the person holds a
+        # current mandate, and a deputado federal running for governador holds one
+        # without seeking re-election. The ficha already separates them
+        # (`link.same_office`); a listing that flattened both into one "reeleição" flag
+        # would assert of a person something the data does not say.
+        "incumbent_house": incumbent_house.label if incumbent_house else None,
+        "reelection_same_office": (
+            incumbent_house is not None and cargos.house_for(c.cd_cargo) is incumbent_house
+        ),
         "resultado": c.ds_sit_tot_turno,
         "majoritario": c.is_majoritario,
         # Derived, not stored: "majoritário" and "files a proposta de governo" are

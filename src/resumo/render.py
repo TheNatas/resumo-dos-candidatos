@@ -11,6 +11,9 @@ What comes out is self-contained (no CDN, no API calls) and is published as-is:
       index.html                    todas as candidaturas do escopo + filtro em JS
       sobre/index.html              fontes, ressalvas e metodologia
       candidato/<sq>/index.html     mesma URL que o app vivo serve
+      candidato/<sq>/votos/         os votos nominais, um a um
+      candidato/<sq>/proposicoes/   as proposições de autoria
+      candidato/<sq>/gastos/        os lançamentos de gabinete
       api/scope.json                o que este deploy cobre
       api/candidates.json           índice de busca
       api/candidates/<sq>.json      mesma resposta do endpoint JSON
@@ -34,6 +37,7 @@ from sqlalchemy.orm import Session
 from resumo import cargos
 from resumo.api import queries
 from resumo.config import get_settings
+from resumo.util import ano_range, brl
 
 _WEB = Path(__file__).resolve().parent / "web"
 
@@ -44,11 +48,12 @@ class RenderResult:
     proposals: int
     photos: int
     out: Path
+    sections: int = 0
 
     def __str__(self) -> str:  # mirrors the collectors' one-line CLI output
         return (
-            f"render: {self.pages} fichas, {self.proposals} propostas, "
-            f"{self.photos} fotos → {self.out}"
+            f"render: {self.pages} fichas, {self.sections} listagens, "
+            f"{self.proposals} propostas, {self.photos} fotos → {self.out}"
         )
 
 
@@ -77,6 +82,7 @@ def _environment(*, base_url: str, election_year: int, generated_at: str) -> Env
         static_mode=True,
         generated_at=generated_at,
     )
+    env.filters.update(brl=brl, ano_range=ano_range)
     return env
 
 
@@ -201,6 +207,7 @@ def render_site(
 
     proposals = 0
     photos = 0
+    section_paths: list[str] = []
     for summary in summaries:
         sq = summary["sq_candidato"]
         detail = queries.candidate_detail(session, sq, include_storage_path=True)
@@ -218,6 +225,19 @@ def render_site(
             env.get_template("candidate.html").render(d=detail),
         )
         _write_json(out / "api" / "candidates" / f"{sq}.json", detail)
+        # As listagens por trás dos contadores. Só existem para quem tem histórico, e
+        # `track_section` aplica o mesmo portão da ficha — a página estática não pode
+        # publicar um vínculo que a ficha se recusa a afirmar.
+        if detail["incumbent_confirmed"]:
+            for secao in queries.TRACK_SECTIONS:
+                section = queries.track_section(session, sq, secao)
+                if section is None:  # pragma: no cover — o portão já passou acima
+                    continue
+                section_paths.append(f"candidato/{sq}/{secao}/")
+                _write(
+                    out / "candidato" / sq / secao / "index.html",
+                    env.get_template("track_detail.html").render(d=section),
+                )
 
     _write(
         out / "index.html",
@@ -242,9 +262,15 @@ def render_site(
     shutil.copytree(_WEB / "static", out / "static", dirs_exist_ok=True)
     _write_robots(out, site_url)
     if site_url:
-        _write_sitemap(out, site_url.rstrip("/"), summaries, generated_at)
+        _write_sitemap(out, site_url.rstrip("/"), summaries, section_paths, generated_at)
 
-    return RenderResult(pages=len(summaries), proposals=proposals, photos=photos, out=out)
+    return RenderResult(
+        pages=len(summaries),
+        proposals=proposals,
+        photos=photos,
+        out=out,
+        sections=len(section_paths),
+    )
 
 
 def _write_robots(out: Path, site_url: str | None) -> None:
@@ -254,11 +280,21 @@ def _write_robots(out: Path, site_url: str | None) -> None:
     _write(out / "robots.txt", "\n".join(lines) + "\n")
 
 
-def _write_sitemap(out: Path, site_url: str, summaries: list[dict], generated_at: str) -> None:
+def _write_sitemap(
+    out: Path,
+    site_url: str,
+    summaries: list[dict],
+    section_paths: list[str],
+    generated_at: str,
+) -> None:
     today = dt.date.today().isoformat()
+    # As listagens entram no sitemap porque são a prova por trás dos números: uma
+    # página que só o link da ficha alcança fica invisível para quem procura pelo
+    # nome do parlamentar somado a "votos" ou "gastos".
     urls = (
         [f"{site_url}/", f"{site_url}/sobre/"]
         + [f"{site_url}/candidato/{s['sq_candidato']}/" for s in summaries]
+        + [f"{site_url}/{path}" for path in section_paths]
     )
     body = "\n".join(
         f"  <url><loc>{u}</loc><lastmod>{today}</lastmod></url>" for u in urls

@@ -307,3 +307,83 @@ def test_photo_base_url_is_prefixed(session, tmp_path, _storage):
     ficha = (out / "candidato" / "C1" / "index.html").read_text(encoding="utf-8")
     assert 'src="/resumo-dos-candidatos/foto/C1.jpg"' in ficha
     assert 'src="/foto/' not in ficha
+
+
+def test_detail_listings_are_published_as_static_pages(session, tmp_path, _storage):
+    """As listagens têm de existir no site estático nas MESMAS URLs que o app vivo
+    serve — senão um link copiado de um funciona e do outro não."""
+    import datetime as dt
+
+    from resumo.db.models import (
+        CandidateMandateLink,
+        ConfidenceTier,
+        Expense,
+        House,
+        Mandate,
+        MatchMethod,
+        Person,
+        Proposition,
+        Vote,
+    )
+
+    person = Person(cpf="11144477735", nome_normalizado="MARIA DA SILVA")
+    session.add(person)
+    session.flush()
+    mandate = Mandate(
+        house=House.ASSEMBLEIA, house_member_id="maria", id_legislatura=20,
+        person_id=person.id, sigla_uf="SC", nome_parlamentar="Maria",
+    )
+    session.add(mandate)
+    session.flush()
+    session.add_all(
+        [
+            Candidacy(
+                sq_candidato="C1", ano_eleicao=2026, sg_uf="SC", cd_cargo=3,
+                ds_cargo="GOVERNADOR", nome_candidato="MARIA DA SILVA",
+                nome_urna="MARIA", nome_normalizado="MARIA DA SILVA",
+                sg_partido="PT", is_majoritario=True,
+            ),
+            CandidateMandateLink(
+                sq_candidato="C1", mandate_id=mandate.id, person_id=person.id,
+                match_method=MatchMethod.cpf_exact, confidence_score=1.0,
+                confidence_tier=ConfidenceTier.auto_strong,
+                is_incumbent_reelection=True, pipeline_version="test",
+            ),
+            Vote(mandate_id=mandate.id, house_member_id="maria", id_votacao="ALv1",
+                 tipo_voto="Sim", data_votacao=dt.date(2026, 6, 16)),
+            Proposition(proposition_id="ALp1", house=House.ASSEMBLEIA,
+                        authoring_mandate_id=mandate.id, sigla_tipo="PL.", numero=1,
+                        ano=2026, ementa="Institui algo."),
+            Expense(mandate_id=mandate.id, house=House.ASSEMBLEIA,
+                    house_member_id="maria", ano=2026, mes=3, tipo_despesa="DIÁRIAS",
+                    valor_liquido=100.0, cod_documento="D1", num_documento="N1",
+                    row_hash="rh1"),
+        ]
+    )
+    session.commit()
+
+    out = tmp_path / "site"
+    result = render_site(session, out=out, base_url="", site_url=None)
+
+    assert result.sections == 3
+    for secao in ("votos", "proposicoes", "gastos"):
+        assert (out / "candidato" / "C1" / secao / "index.html").is_file()
+
+    ficha = (out / "candidato" / "C1" / "index.html").read_text(encoding="utf-8")
+    assert "/candidato/C1/votos/" in ficha
+    # O rótulo da despesa segue a Casa também no site estático.
+    assert "verba de gabinete e diárias" in ficha
+    assert "CEAP" not in ficha
+
+
+def test_no_detail_pages_for_a_candidacy_without_a_confirmed_mandate(
+    session, tmp_path, _storage
+):
+    """Sem vínculo aceito não há histórico — e não pode haver página de detalhe."""
+    _seed(session)
+    out = tmp_path / "site"
+
+    result = render_site(session, out=out, base_url="", site_url=None)
+
+    assert result.sections == 0
+    assert not (out / "candidato" / "C1" / "votos").exists()

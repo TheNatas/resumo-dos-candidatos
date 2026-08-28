@@ -17,6 +17,22 @@
       <span class="card-texto">
         <strong>{{ c.nome_urna or c.nome }}</strong>
         <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
+        {# Só o lado positivo vira selo, pela mesma razão que só ele vira filtro:
+           a ausência de vínculo aceito não afirma que a pessoa NÃO tem mandato.
+           E só o mesmo cargo é reeleição — quem exerce mandato em outra Casa
+           (um deputado federal disputando o governo) tem o mandato nomeado, não
+           chamado de reeleição. É a distinção que a ficha faz com
+           `link.same_office`; achatá-la aqui poria "tentando reeleição" em quem
+           não está tentando. #}
+        {% if c.incumbent_confirmed %}
+          {% if c.reelection_same_office %}
+            <span class="badge badge-mandato"
+                  title="Vínculo verificado com um mandato atual na {{ c.incumbent_house }} — o mesmo cargo que disputa.">tentando reeleição</span>
+          {% else %}
+            <span class="badge badge-mandato"
+                  title="Vínculo verificado com um mandato atual na {{ c.incumbent_house }}, Casa diferente do cargo que disputa agora.">mandato atual · {{ c.incumbent_house }}</span>
+          {% endif %}
+        {% endif %}
         {% if c.resultado %}<span class="badge">{{ c.resultado }}</span>{% endif %}
         {% if c.history_status == 'no_public_source' %}
           <span class="badge badge-muted" title="{{ c.history_note }}">sem fonte de histórico</span>

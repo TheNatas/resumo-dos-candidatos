@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ d.titulo }} · {{ d.candidacy.nome }} · Resumo dos Candidatos{% endblock %}
+{% block content %}
+{% set c = d.candidacy %}
+<a href="{{ base_url }}/candidato/{{ c.sq_candidato }}/" class="back">← voltar para a ficha</a>
+
+<article class="ficha">
+  <h1>{{ d.titulo }}</h1>
+  <p class="subtitle">{{ c.nome_urna or c.nome }}{% if d.nome_parlamentar %}
+    (como {{ d.nome_parlamentar }}){% endif %} · {{ d.house_label }}</p>
+
+  {# A ressalva da Casa vem ANTES da tabela, não depois: quem lê "12 votos" precisa
+     saber o que 12 significa naquela Casa antes de comparar com outro candidato. #}
+  {% if d.house_caveat %}
+    <p class="no-source">{{ d.house_caveat }}</p>
+  {% endif %}
+
+  {% if not d.rows %}
+    <p class="no-source"><strong>{{ d.vazio }}</strong><br>
+      Ausência aqui é sobre o que a fonte publica e o que nós coletamos — não é
+      afirmação de que a parlamentar não atuou.</p>
+
+  {% elif d.secao == 'votos' %}
+    <p class="note">{{ d.rows|length }} voto(s) nominal(is), do mais recente para o
+      mais antigo.</p>
+    <table class="detalhe detalhe--{{ d.secao }}">
+      <thead>
+        <tr><th>Data</th><th>Matéria</th><th>Voto</th><th>Orientação do partido</th></tr>
+      </thead>
+      <tbody>
+        {% for r in d.rows %}
+          <tr>
+            <td class="col-data">{{ r.data.strftime('%d/%m/%Y') if r.data else '—' }}</td>
+            <td>
+              {% if r.proposicao_url %}
+                <a href="{{ r.proposicao_url }}" rel="noopener">{{ r.proposicao_id }}</a>
+              {% else %}
+                {{ r.proposicao_id or '—' }}
+              {% endif %}
+            </td>
+            <td><strong>{{ r.tipo_voto or '—' }}</strong></td>
+            <td>
+              {# Sem orientação publicada não dá para dizer se seguiu a bancada. O
+                 travessão é a resposta honesta; "seguiu" seria invenção. #}
+              {% if r.orientacao_partido %}
+                {{ r.orientacao_partido }}
+                {% if r.seguiu_orientacao is not none %}
+                  <span class="badge {{ 'badge-muted' if r.seguiu_orientacao else 'badge-warn' }}">
+                    {{ 'seguiu' if r.seguiu_orientacao else 'divergiu' }}</span>
+                {% endif %}
+              {% else %}<span class="muted">não publicada</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+  {% elif d.secao == 'proposicoes' %}
+    <p class="note">{{ d.rows|length }} proposição(ões) de autoria, da mais recente
+      para a mais antiga.</p>
+    <table class="detalhe detalhe--{{ d.secao }}">
+      <thead><tr><th>Código</th><th>Ementa</th><th>Entrada</th><th>Situação</th></tr></thead>
+      <tbody>
+        {% for r in d.rows %}
+          <tr>
+            <td class="col-codigo">
+              {% if r.url %}<a href="{{ r.url }}" rel="noopener">{{ r.codigo }}</a>
+              {% else %}{{ r.codigo }}{% endif %}
+            </td>
+            <td>{{ r.ementa or '—' }}</td>
+            <td class="col-data">{{ r.data.strftime('%d/%m/%Y') if r.data else '—' }}</td>
+            <td>{{ r.situacao or '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+  {% else %}
+    <p class="note">{{ d.rows|length }} lançamento(s) de {{ d.expense_label }}, do mais
+      recente para o mais antigo. Valores negativos são devoluções, e o sinal é
+      mantido — tirá-lo inflaria o total com dinheiro que voltou.</p>
+    <table class="detalhe detalhe--{{ d.secao }}">
+      <thead>
+        <tr><th>Competência</th><th>Rubrica</th><th>Fornecedor</th>
+          <th class="col-valor">Líquido</th><th class="col-valor">Glosa</th><th>Doc.</th></tr>
+      </thead>
+      <tbody>
+        {% for r in d.rows %}
+          <tr>
+            <td class="col-data">{{ '%02d/'|format(r.mes) if r.mes else '' }}{{ r.ano }}</td>
+            <td>{{ r.tipo or '—' }}</td>
+            <td>{{ r.fornecedor or '—' }}{% if r.cnpj_cpf %}
+              <span class="note">{{ r.cnpj_cpf }}</span>{% endif %}</td>
+            <td class="col-valor">{{ r.valor_liquido|brl }}</td>
+            {# Glosa é o valor que a Casa recusou reembolsar: escondê-la apagaria a
+               única pista de que aquela despesa foi contestada. #}
+            <td class="col-valor">{% if r.valor_glosa %}{{ r.valor_glosa|brl }}{% else %}—{% endif %}</td>
+            <td>{% if r.documento_url %}
+              <a href="{{ r.documento_url }}" rel="noopener">recibo</a>
+            {% else %}<span class="muted">—</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  <p class="note">Esta listagem é exatamente o que sustenta o número na ficha: as
+    mesmas linhas coletadas da fonte oficial, sem seleção nem recorte.</p>
+</article>
+{% endblock %}

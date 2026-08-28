@@ -65,15 +65,15 @@
     {% set f = d.campaign_finance %}
     {% if f.has_data %}
       <ul class="stats">
-        <li><strong>R$ {{ '%.2f'|format(f.revenue_total) }}</strong><span>arrecadado</span></li>
-        <li><strong>R$ {{ '%.2f'|format(f.expense_total) }}</strong><span>despesas contratadas</span></li>
+        <li><strong>{{ f.revenue_total|brl }}</strong><span>arrecadado</span></li>
+        <li><strong>{{ f.expense_total|brl }}</strong><span>despesas contratadas</span></li>
         <li><strong>{{ f.revenue_count }}</strong><span>receitas declaradas</span></li>
       </ul>
       {% if d.top_donors %}
         <h3>Maiores doadores</h3>
         <ul class="donors">
           {% for donor in d.top_donors %}
-            <li><span>{{ donor.nome or '—' }}</span><strong>R$ {{ '%.2f'|format(donor.total) }}</strong></li>
+            <li><span>{{ donor.nome or '—' }}</span><strong>{{ donor.total|brl }}</strong></li>
           {% endfor %}
         </ul>
       {% endif %}
@@ -108,12 +108,50 @@
         Vínculo por {{ d.link.match_method }} · confiança
         {{ '%.2f'|format(d.link.confidence_score) }} ({{ d.link.confidence_tier }}).
       </p>
+      {% set e = t.expenses %}
+      {% set ficha = base_url ~ '/candidato/' ~ c.sq_candidato %}
+      {# Cada contador leva à listagem que o sustenta. "12 votos nominais" não afirma
+         nada sozinho — sem poder ver EM QUE se votou, o número não distingue um
+         mandato de outro. O link só aparece quando há linhas para mostrar: um
+         "ver →" que abre uma página vazia é pior que o número seco. #}
       <ul class="stats">
-        <li><strong>{{ t.votes_total }}</strong><span>votos nominais</span></li>
+        <li>
+          {% if t.votes_total %}<a href="{{ ficha }}/votos/">
+            <strong>{{ t.votes_total }}</strong><span>votos nominais</span></a>
+          {% else %}<strong>0</strong><span>votos nominais</span>{% endif %}
+        </li>
         <li><strong>{{ t.votes_sim }}</strong><span>votos "Sim"</span></li>
-        <li><strong>{{ t.propositions_total }}</strong><span>proposições</span></li>
-        <li><strong>R$ {{ '%.2f'|format(t.expense_total) }}</strong><span>CEAP (líquido)</span></li>
+        <li>
+          {% if t.propositions_total %}<a href="{{ ficha }}/proposicoes/">
+            <strong>{{ t.propositions_total }}</strong><span>proposições</span></a>
+          {% else %}<strong>0</strong><span>proposições</span>{% endif %}
+        </li>
+        {# O rótulo vem da Casa, não é fixo: "CEAP" é o nome da cota DA CÂMARA, e
+           carimbá-lo sobre o total de um deputado estadual convida exatamente a
+           comparação entre Casas que o resto da ficha recusa. #}
+        <li>
+          {% if e.count %}<a href="{{ ficha }}/gastos/">
+            <strong>{{ e.total|brl }}</strong>
+            <span>{{ e.label }}{% if e.anos %} · {{ e.anos|ano_range }}{% endif %}</span></a>
+          {% else %}<strong>{{ e.total|brl }}</strong><span>{{ e.label }}</span>{% endif %}
+        </li>
       </ul>
+
+      {# Um total de gastos sozinho não informa: sem janela o leitor assume o mandato
+         inteiro, e sem régua não tem contra o que comparar. Nenhuma fonte ingerida
+         publica teto, então a régua é a mediana da própria Casa. Ver
+         `queries.expenses_payload`. #}
+      {% if e.count %}
+        <p class="note">
+          {{ e.count }} lançamentos{% if e.anos %}, referentes a {{ e.anos|ano_range }} —
+          <strong>os anos coletados, não necessariamente o mandato inteiro</strong>{% endif %}.
+          {% if e.peer %}
+            {{ 'Acima' if e.peer.above_median else 'Abaixo' }} da mediana da Casa
+            ({{ e.peer.median|brl }} entre {{ e.peer.n }} parlamentares, mesma janela).
+          {% endif %}
+          {{ e.quota_note }}
+        </p>
+      {% endif %}
 
       {# Frequência: cada régua com o substantivo da própria fonte. A Câmara publica
          dias E sessões e os dois números não batem de propósito, então aparecem lado
@@ -196,8 +234,8 @@
         <h3>Emendas parlamentares individuais</h3>
         <ul class="stats">
           <li><strong>{{ d.amendments.count }}</strong><span>emendas</span></li>
-          <li><strong>R$ {{ '%.2f'|format(d.amendments.empenhado_total) }}</strong><span>empenhado</span></li>
-          <li><strong>R$ {{ '%.2f'|format(d.amendments.pago_total) }}</strong><span>pago</span></li>
+          <li><strong>{{ d.amendments.empenhado_total|brl }}</strong><span>empenhado</span></li>
+          <li><strong>{{ d.amendments.pago_total|brl }}</strong><span>pago</span></li>
         </ul>
         <p class="note">{{ d.amendments.note }}</p>
       {% endif %}

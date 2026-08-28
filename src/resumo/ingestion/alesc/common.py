@@ -38,8 +38,23 @@ logger = logging.getLogger("resumo.ingestion.alesc")
 ID_PREFIX = "AL"
 
 # Honorifics and Portuguese name particles carry no discriminating power.
+#
+# The academic titles matter because ALESC's own sources abbreviate them differently
+# for the same person: the roster says "Profª Vanessa da Rosa" and the e-Legis
+# iniciativa <select> says "Deputada Prof. Vanessa da Rosa". Normalization strips the
+# ordinal indicator to PROFA and the period to PROF, so the two spellings stop being
+# the same token and the deputy silently loses her match. Dropping the title entirely
+# makes both read as {VANESSA, ROSA}.
+#
+# Only titles anyone may hold are listed. Occupational nicknames that ALESC treats as
+# part of the name (DELEGADO, SARGENTO, PADRE) are NOT noise: for several deputies
+# they are the most distinctive token there is, and discarding them would collapse
+# two different people onto one match.
 _NOISE = frozenset(
-    {"DEPUTADO", "DEPUTADA", "DEP", "DA", "DE", "DI", "DO", "DAS", "DOS", "E"}
+    {
+        "DEPUTADO", "DEPUTADA", "DEP", "DA", "DE", "DI", "DO", "DAS", "DOS", "E",
+        "PROF", "PROFA", "DR", "DRA", "SR", "SRA",
+    }
 )
 # Minimum rapidfuzz score for a last-resort fuzzy hit, and the margin the winner must
 # beat the runner-up by. Deliberately strict: a wrong attribution here would put one
@@ -134,19 +149,26 @@ class MandateIndex:
     def by_slug(self, slug: str) -> MandateRef | None:
         return next((r for r in self.refs if r.slug == slug), None)
 
-    def match(self, raw: str | None) -> MandateRef | None:
-        """Exact normalized hit -> token-subset hit -> strict fuzzy hit -> None."""
+    def match(self, raw: str | None, *, record_unmatched: bool = True) -> MandateRef | None:
+        """Exact normalized hit -> token-subset hit -> strict fuzzy hit -> None.
+
+        `record_unmatched=False` when the caller is *probing* a vocabulary rather than
+        placing rows — matching e-Legis's ~280 ``iniciativa`` options against a 61-seat
+        roster legitimately misses ~220 times (comissões, Poder Executivo, legislaturas
+        passadas), and letting those into :attr:`unmatched` would bury the misses that
+        actually cost data under noise that never had a mandate to find.
+        """
         key = (raw or "").strip()
         if not key:
             return None
         if key in self._cache:
             hit = self._cache[key]
-            if hit is None:
+            if hit is None and record_unmatched:
                 self.unmatched[key] += 1
             return hit
         hit = self._resolve(key)
         self._cache[key] = hit
-        if hit is None:
+        if hit is None and record_unmatched:
             self.unmatched[key] += 1
         return hit
 

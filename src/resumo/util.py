@@ -111,3 +111,34 @@ def parse_int(value: str | None) -> int | None:
         return int(float(v))
     except ValueError:
         return None
+
+
+def brl(value: float | int | None) -> str:
+    """Format money the way a Brazilian reader expects: ``R$ 926.077,54``.
+
+    The templates used ``'%.2f'|format(...)``, which prints ``926077.54`` — a number
+    in a foreign notation, without thousands separators, exactly where the reader most
+    needs to see the magnitude at a glance. Six figures and seven figures should not
+    look alike.
+
+    Not locale-dependent on purpose: relying on ``locale.setlocale`` would make the
+    output depend on which locales the deploy image happens to have installed, and
+    the static build and the live app would silently disagree.
+    """
+    if value is None:
+        return "—"
+    inteiro, _, centavos = f"{float(value):,.2f}".partition(".")
+    return f"R$ {inteiro.replace(',', '.')},{centavos}"
+
+
+def ano_range(anos: list[int] | None) -> str | None:
+    """``[2025, 2026]`` -> ``"2025–2026"``; ``[2024]`` -> ``"2024"``; ``[]`` -> None.
+
+    Uses an en dash, and says nothing about gaps — a hole in the middle of the range
+    is a hole in the source data, and the label that carries this string always names
+    the years as *coletados*, never as *cobertos*.
+    """
+    if not anos:
+        return None
+    lo, hi = min(anos), max(anos)
+    return str(lo) if lo == hi else f"{lo}–{hi}"

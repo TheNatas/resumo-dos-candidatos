@@ -17,6 +17,7 @@ from resumo.api.deps import get_session
 from resumo.api.routers import candidates
 from resumo.config import get_settings
 from resumo.db.models import CandidatePhoto, GovernmentProposal
+from resumo.util import ano_range, brl
 
 _WEB = Path(__file__).resolve().parent.parent / "web"
 templates = Jinja2Templates(directory=str(_WEB / "templates"))
@@ -24,6 +25,10 @@ templates = Jinja2Templates(directory=str(_WEB / "templates"))
 # renderer reuses these same templates with a different base_url.
 templates.env.globals["base_url"] = get_settings().site_base_url
 templates.env.globals["election_year"] = get_settings().election_year
+# Shared with the static renderer's env (see `render._environment`) — the templates
+# are the same files and must not know which of the two is rendering them.
+templates.env.filters["brl"] = brl
+templates.env.filters["ano_range"] = ano_range
 
 
 def _reeleicao_filter(value: str | None) -> bool | None:
@@ -146,6 +151,21 @@ def candidate_page(
     if detail is None:
         return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
     return templates.TemplateResponse(request, "candidate.html", {"d": detail})
+
+
+@app.get("/candidato/{sq_candidato}/{secao}", response_class=HTMLResponse)
+def candidate_track_page(
+    request: Request, sq_candidato: str, secao: str, session: Session = Depends(get_session)
+):
+    """A listagem por trás de um contador da ficha (votos, proposições, gastos).
+
+    Mesmo caminho que o site estático publica em ``candidato/<sq>/<secao>/index.html``,
+    para que um link copiado de um funcione no outro.
+    """
+    d = queries.track_section(session, sq_candidato, secao)
+    if d is None:
+        return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
+    return templates.TemplateResponse(request, "track_detail.html", {"d": d})
 
 
 @app.get("/foto/{sq_candidato}.jpg")

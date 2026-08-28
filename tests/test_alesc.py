@@ -591,3 +591,113 @@ def test_mandate_index_still_works_without_a_bridge(session):
     assert index.refs[0].aliases == ()
     assert index.match("Fulano de Tal") is not None
     assert index.match("NOME CIVIL DESCONHECIDO") is None
+
+
+# ── iniciativa: o filtro que a fonte ignora em silêncio ──────────────────────
+INICIATIVA_SELECT = """
+<select name="iniciativa">
+  <option value="">Todos</option>
+  <option value="ana-campagnolo">Deputada Ana Campagnolo</option>
+  <option value="vanessa-da-rosa">Deputada Prof. Vanessa da Rosa</option>
+  <option value="pedro-baldissera">Deputado Padre Pedro Baldissera</option>
+  <option value="camilo-martins">Deputado Camilo Martins</option>
+  <option value="nazareno-martins">Nazareno Martins</option>
+</select>
+"""
+
+
+def _house_wide(n: int) -> str:
+    """A listagem sem filtro: página cheia e um total grande, como a Casa inteira."""
+    cards = "".join(
+        f'<div class="card card-alesc mb-3"><div class="card-body">'
+        f'<h4 class="card-title"><a href="/proposicoes/h{i}">PL./{i:04d}/2026</a></h4>'
+        f'<p class="mb-1 fst-italic">Ementa {i}.</p></div></div>'
+        for i in range(10)
+    )
+    return (
+        f'{INICIATIVA_SELECT}'
+        f'<div class="d-flex justify-content-end mb-2">Exibindo 1 - 10 de {n}</div>{cards}'
+    )
+
+
+def test_iniciativa_resolves_the_elegis_vocabulary_not_the_profile_slug(session):
+    """O slug do perfil e o valor de `iniciativa` são vocabulários diferentes."""
+    from resumo.ingestion.alesc.common import mandate_index
+    from resumo.ingestion.alesc.proposicoes import resolve_iniciativa
+
+    _seed(
+        session,
+        ("ana-campagnolo", "Ana Campagnolo", "PL"),
+        ("profa-vanessa-da-rosa", "Profª Vanessa da Rosa", "PP"),
+        ("padre-pedro-baldissera", "Padre Pedro Baldissera", "PT"),
+        ("camilo-martins", "Camilo Martins", "PL"),
+        ("delegado-egidio", "Delegado Egidio", "PL"),
+    )
+
+    class _Stub:
+        def get_elegis(self, path, params=None, **kw):
+            return _house_wide(531)
+
+    resolved, unresolved = resolve_iniciativa(
+        _Stub(), mandate_index(session, LEG), "processo-legislativo"
+    )
+    # Igualdade de string quando a fonte publica o próprio slug.
+    assert resolved["ana-campagnolo"] == "ana-campagnolo"
+    # Por nome, quando os dois vocabulários divergem — este é o caso que corrompia.
+    assert resolved["profa-vanessa-da-rosa"] == "vanessa-da-rosa"
+    assert resolved["padre-pedro-baldissera"] == "pedro-baldissera"
+    # "Camilo Martins" também casa fuzzy com "Nazareno Martins"; a igualdade exata
+    # do passo 1 decide, em vez de a ambiguidade descartar o deputado.
+    assert resolved["camilo-martins"] == "camilo-martins"
+    # Sem opção alguma: não é coletado, e é reportado.
+    assert unresolved == ["delegado-egidio"]
+    assert "delegado-egidio" not in resolved
+
+
+@respx.mock
+def test_unrecognised_iniciativa_never_attributes_the_whole_house(session):
+    """🚨 e-Legis devolve a Casa inteira quando não reconhece o `iniciativa`.
+
+    Sem defesa, as 531 proposições da Casa viram autoria de um deputado só.
+    """
+    _seed(session, ("delegado-egidio", "Delegado Egidio", "PL"))
+    respx.get(url__startswith=f"{ELEGIS}/proposicoes/processo-legislativo").mock(
+        return_value=httpx.Response(200, text=_house_wide(531))
+    )
+
+    result = ProposicoesCollector().run(session, anos=[2026], id_legislatura=LEG)
+    session.flush()
+
+    assert session.scalars(select(Proposition)).all() == []
+    assert "sem `iniciativa`" in result.detail
+
+
+@respx.mock
+def test_sentinel_refuses_a_response_identical_to_the_unfiltered_one(session):
+    """Segunda linha de defesa: um valor aceito na validação que o servidor ignora
+    assim mesmo. A resposta é reconhecida pelo total anunciado."""
+    _seed(session, ("ana-campagnolo", "Ana Campagnolo", "PL"))
+    # `ana-campagnolo` É uma opção publicada, então passa por `resolve_iniciativa`;
+    # o servidor responde a Casa inteira de qualquer forma.
+    respx.get(url__startswith=f"{ELEGIS}/proposicoes/processo-legislativo").mock(
+        return_value=httpx.Response(200, text=_house_wide(531))
+    )
+
+    ProposicoesCollector().run(session, anos=[2026], id_legislatura=LEG)
+    session.flush()
+    assert session.scalars(select(Proposition)).all() == []
+
+
+@respx.mock
+def test_sentinel_does_not_fire_on_a_genuinely_small_result(session):
+    """Um deputado cujo total coincide com o da Casa num ano magro é coincidência
+    plausível, não filtro ignorado — o piso existe para não descartar dado real."""
+    _seed(session, ("ana-campagnolo", "Ana Campagnolo", "PL"))
+    respx.get(url__startswith=f"{ELEGIS}/proposicoes/processo-legislativo").mock(
+        return_value=httpx.Response(200, text=INICIATIVA_SELECT + PROPOSICOES)
+    )
+
+    ProposicoesCollector().run(session, anos=[2026], id_legislatura=LEG)
+    session.flush()
+    prop = session.scalar(select(Proposition))
+    assert prop is not None and prop.proposition_id == "AL574R6"
