@@ -263,6 +263,24 @@ publicado: [DEPLOY.md](DEPLOY.md).
 > **escopo** — ampliar o escopo re-ingere o mesmo arquivo, em vez de pulá-lo como
 > "inalterado".
 
+> **`--inicio` das votações não precisa ser escolhido à mão.** O ledger torna a
+> *escrita* um no-op, mas não evita a rede: refazer o ano inteiro são ~14 mil
+> requisições para reaprender votação antiga, que não muda. `janela` responde de onde
+> recomeçar, por Casa — banco vazio devolve o piso, banco populado devolve a última
+> votação daquela Casa menos a sobreposição (a fonte publica com atraso). É o que o
+> `collect.yml` usa:
+>
+> ```bash
+> uv run resumo janela --house CAMARA                    # CAMARA | SENADO | ASSEMBLEIA
+> uv run resumo janela --house ASSEMBLEIA --dias 45 --piso 2026-01-01
+> uv run resumo collect camara-votacoes \
+>   --inicio "$(uv run resumo janela --house CAMARA)" --fim "$(date -u +%F)"
+> ```
+>
+> Por Casa e não global: um máximo único faria a Casa mais lenta ser pulada pelo
+> avanço da mais rápida. A janela só encolhe — nunca recua para antes de `--piso`
+> (padrão: 1º de janeiro do `RESUMO_ELECTION_YEAR`).
+
 ---
 
 ## Calendário dos dados (2026)
@@ -286,12 +304,20 @@ O coletor de contas trata arquivo vazio como resultado normal (`empty`), não co
 
 ## Modelo de dados
 
-`Person` · `Candidacy` · `Mandate` · **`CandidateMandateLink`** · `GovernmentProposal` ·
-`CandidatePhoto` ·
-`Vote` · `Proposition` · `AttendanceRecord` · `Expense` · `CandidateAsset` · `Coalition` ·
+`Person` · `PersonIdentifierAlias` · `Candidacy` · `Mandate` ·
+**`CandidateMandateLink`** · `GovernmentProposal` · `CandidatePhoto` ·
+`Vote` · `Proposition` · `AttendanceRecord` · `AttendanceSummary` · `MandateLeave` ·
+`Expense` · `CandidateAsset` · `Coalition` ·
 `CampaignRevenue` · `CampaignRevenueOriginator` · `CampaignExpense` · `CampaignPayment` ·
 `BudgetAmendment` · `AmendmentAuthorLink` · `ReviewQueue` · `RawIngestion`.
 Definições em [src/resumo/db/models.py](src/resumo/db/models.py).
+
+Duas tabelas de frequência, não uma, porque as perguntas são diferentes.
+`AttendanceRecord` tem grão de evento, e o denominador dele é *o que foi coletado* —
+não responde "quantas sessões ele perdeu". `AttendanceSummary` guarda o consolidado
+com o universo esperado junto, **uma linha por `AttendanceUnit`** (a Câmara publica
+dias *e* sessões, e as duas não batem de propósito). `MandateLeave` fica fora das
+duas: licença é medida em dias corridos e explica a ausência, em vez de contá-la.
 
 ## Resolução de identidade
 

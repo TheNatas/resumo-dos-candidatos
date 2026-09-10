@@ -51,8 +51,15 @@ collect.yml  (cron ~05:00 BRT · ~3 h · grupo de concorrência: coleta)
   ├── baixa o snapshot ────────────► service container postgres:16
   │                                  (é superuser: CREATE EXTENSION funciona)
   ├── uv run resumo collect …        ← idempotente: no-op quando o hash não mudou
+  │     ├── mandatos (inclui executivo-governadores, que deriva do TSE já coletado)
+  │     ├── histórico: despesas, proposições, votações (janela incremental),
+  │     │   eventos, camara-presenca, senado-licencas, alesc-presenca, executivo-atos
+  │     ├── consolidação sem rede: senado-presenca-resumo, alesc-presenca-resumo
+  │     └── emendas + link-emendas-authors
+  ├── abre/comenta a issue de coletores falhando
   ├── publica o snapshot ──────────► release `snapshot` (assets sobrescritos)
-  └── chama deploy.yml ────────────┐
+  ├── chama deploy.yml ────────────┐
+  └── job `alarme` (fonte inteira fora do ar → execução vermelha; ver abaixo)
                                    │
 deploy.yml   (push em main · ~3 min · grupo de concorrência: pages)  ◄──┘
   ├── validate + test                ← nada é publicado sem a suíte passar
@@ -165,17 +172,38 @@ um dump **sem CPF** — não o snapshot do pipeline.
   - [ ] **habilitar Pages no repositório** (Settings → Pages → Source: GitHub Actions)
   - [ ] **definir a variável `RESUMO_CONTACT`** (Settings → Secrets and variables →
         Actions → Variables) — é ela que entra no `User-Agent`
-- [ ] **4. Página `/sobre`** — carregar as ressalvas que hoje só existem no README
-      (ALESC ~96% simbólicas · Senado 57% secretas · emendas sem "valor autorizado")
+- [x] **4. Página `/sobre`** — as ressalvas deixaram de existir só no README:
+      ALESC ~96% simbólicas · Senado 57% secretas · emendas sem "valor autorizado"
+      estão em [`sobre.html`](src/resumo/web/templates/sobre.html), na mesma página
+      que o leitor alcança de qualquer ficha
 - [ ] **5. Cron diário 05:00 BRT** — a prestação parcial de 13–15/09 entra sozinha
 
-## Modos de falha (aprendidos na primeira execução)
+## Modos de falha (aprendidos em produção)
 
 **Um coletor que falha não pode levar os outros junto.** Na primeira execução o
 `camara-votacoes` recebeu um 400 da Câmara, e como todos os coletores dividiam um
 passo sob `bash -e`, os nove seguintes nunca rodaram — enquanto o `continue-on-error`
 do passo relatava sucesso. Agora cada coletor roda isolado (`if ! …`), falha vira
 anotação visível e um resumo no job, e o passo não mente sobre o que aconteceu.
+
+**Um aviso que não fica vermelho não é aviso.** O passo acima já anotava cada falha e
+mantinha uma issue aberta — e mesmo assim os sete coletores do TSE falharam toda noite
+por **nove dias** sem ninguém perceber, porque o Actions só notifica quando o workflow
+*falha*, e `coleta` de propósito não falha por fonte de terceiro fora do ar. O alarme
+existia; o que faltava era algo que tornasse a execução vermelha.
+
+A distinção que faltava é entre **coletor instável** e **fonte fora do ar**: um coletor
+isolado que falha é ruído de fonte pública e se resolve sozinho na execução seguinte;
+uma fonte em que *nenhum* coletor passou parou de chegar, e só para de piorar quando
+alguém age. O passo agrupa os coletores por fonte (o prefixo depois de `collect`:
+`tse-fotos` → `tse`), compara tentados contra falhos e publica em `fontes_fora` as
+fontes com 100% de falha — a issue passa a dizer isso com todas as letras, e o job
+`alarme` reprova a execução.
+
+O `alarme` fica **separado** de `coleta` porque `publica` depende dela: reprovar a
+coleta tiraria o site do ar por causa de uma fonte de terceiro, exatamente o oposto do
+que se quer. A publicação segue com o que já está em base, e a execução fica vermelha
+até a fonte voltar.
 
 **A janela de `/votacoes` da Câmara é limitada a 3 meses.** O range do README
 (01/01 → hoje) devolve `400 "A diferença entre as datas não pode ser maior que 3

@@ -734,7 +734,6 @@ def expenses_detail(session: Session, mandate_id: uuid.UUID) -> list[dict]:
             "mes": e.mes,
             "tipo": e.tipo_despesa,
             "fornecedor": e.nome_fornecedor,
-            "cnpj_cpf": e.cnpj_cpf_fornecedor,
             "valor_liquido": float(e.valor_liquido or 0),
             # Glosa é o que a Casa recusou reembolsar. Some-la ao líquido ou escondê-la
             # apagaria a única pista de que a despesa foi contestada.

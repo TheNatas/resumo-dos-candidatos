@@ -63,7 +63,8 @@ def _seed_incumbent(session):
             Vote(mandate_id=mandate.id, house_member_id="1", id_votacao="V2", tipo_voto="Não",
                  data_votacao=dt.date(2024, 3, 2)),
             Expense(mandate_id=mandate.id, house_member_id="1", ano=2024, mes=3,
-                    valor_liquido=100.0, cod_documento="D1", num_documento="N1", row_hash="h1"),
+                    valor_liquido=100.0, cod_documento="D1", num_documento="N1",
+                    cnpj_cpf_fornecedor="12345678909", row_hash="h1"),
         ]
     )
     session.commit()
@@ -97,6 +98,8 @@ def test_html_pages_render(session):
     page = client.get("/candidato/C1")
     assert page.status_code == 200
     assert "Histórico de atuação" in page.text
+    assert "12345678909" not in page.text
+    assert "123.456.789-09" not in page.text
     # unconfirmed shows the guard text, not a guessed link
     assert "Incumbência não confirmada" in client.get("/candidato/C2").text
 

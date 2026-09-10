@@ -93,8 +93,7 @@
           <tr>
             <td class="col-data">{{ '%02d/'|format(r.mes) if r.mes else '' }}{{ r.ano }}</td>
             <td>{{ r.tipo or '—' }}</td>
-            <td>{{ r.fornecedor or '—' }}{% if r.cnpj_cpf %}
-              <span class="note">{{ r.cnpj_cpf }}</span>{% endif %}</td>
+            <td>{{ r.fornecedor or '—' }}</td>
             <td class="col-valor">{{ r.valor_liquido|brl }}</td>
             {# Glosa é o valor que a Casa recusou reembolsar: escondê-la apagaria a
                única pista de que aquela despesa foi contestada. #}
