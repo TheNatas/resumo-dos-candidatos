@@ -4,6 +4,14 @@
 // predicado de DOM embutido no index_static.html. Este arquivo é compartilhado
 // pelas duas versões e não pode saber qual delas está na tela.
 (function () {
+  var voltar = document.querySelector("[data-static-back]");
+  if (voltar && window.location.search) {
+    var destino = new URL(voltar.href, window.location.href);
+    destino.search = window.location.search;
+    destino.hash = "";
+    voltar.href = destino.pathname + destino.search;
+  }
+
   var dialogo = document.getElementById("filtros");
   if (!dialogo || typeof dialogo.showModal !== "function") return;
 

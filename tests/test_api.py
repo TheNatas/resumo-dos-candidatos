@@ -112,6 +112,17 @@ def test_html_pages_render(session):
     assert 'href="/?q=jose&amp;partido=PT"' in filtered
     assert "data-back-link" not in filtered
 
+    listing = client.get(
+        "/", params={
+            "q": "jose", "cargo": "DEPUTADO FEDERAL",
+            "partido": "PT", "reeleicao": "sim",
+        }
+    ).text
+    assert (
+        'href="/candidato/C1?q=jose&amp;cargo=DEPUTADO%20FEDERAL'
+        '&amp;partido=PT&amp;reeleicao=sim"'
+    ) in listing
+
 
 def test_page_filters_by_partido(session):
     _seed_incumbent(session)

@@ -112,6 +112,12 @@
   [cargo, partido, reeleicao].forEach(function (el) {
     el.addEventListener("change", apply);
   });
+
+  var params = new URLSearchParams(window.location.search);
+  q.value = params.get("q") || "";
+  cargo.value = params.get("cargo") || "";
+  partido.value = params.get("partido") || "";
+  reeleicao.checked = params.get("reeleicao") === "sim";
   apply();
 })();
 </script>

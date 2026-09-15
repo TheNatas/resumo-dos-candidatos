@@ -115,7 +115,7 @@ def test_base_url_prefixes_every_internal_link(session, tmp_path, _storage):
     assert 'src="/resumo-dos-candidatos/static/filters.js"' in page
     assert 'href="/resumo-dos-candidatos/candidato/C1"' in page
     ficha = (out / "candidato" / "C1" / "index.html").read_text(encoding="utf-8")
-    assert '<a href="/resumo-dos-candidatos/" class="back">' in ficha
+    assert '<a href="/resumo-dos-candidatos/" class="back" data-static-back>' in ficha
     # No internal link may escape the prefix, or it 404s on a Pages project site.
     assert 'href="/static' not in page
     assert 'href="/candidato' not in page
