@@ -104,6 +104,14 @@ def test_html_pages_render(session):
     # unconfirmed shows the guard text, not a guessed link
     assert "Incumbência não confirmada" in client.get("/candidato/C2").text
 
+    # The ficha owns its return destination. It must not use the referrer, which
+    # can be a detail page after returning from a votos nominais page.
+    filtered = client.get(
+        "/candidato/C1", params={"q": "jose", "partido": "PT"}
+    ).text
+    assert 'href="/?q=jose&amp;partido=PT"' in filtered
+    assert "data-back-link" not in filtered
+
 
 def test_page_filters_by_partido(session):
     _seed_incumbent(session)

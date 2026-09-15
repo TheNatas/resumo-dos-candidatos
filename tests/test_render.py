@@ -97,9 +97,11 @@ def test_static_filters_ship_with_the_page(session, tmp_path, _storage):
 
     assert (out / "static" / "filters.js").is_file()
     page = (out / "index.html").read_text(encoding="utf-8")
+    filters = (out / "static" / "filters.js").read_text(encoding="utf-8")
     assert '<dialog id="filtros"' in page
     assert 'name="reeleicao" value="sim"' in page
     assert "value=\"nao\"" not in page
+    assert "history.back" not in filters
 
 
 def test_base_url_prefixes_every_internal_link(session, tmp_path, _storage):

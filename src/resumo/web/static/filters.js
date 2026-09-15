@@ -1,19 +1,3 @@
-// Volta à lista anterior sem recarregar quando a ficha foi aberta por ela.
-var voltar = document.querySelector("[data-back-link]");
-if (voltar) {
-  voltar.addEventListener("click", function (evento) {
-    try {
-      var origem = new URL(document.referrer);
-      if (origem.origin === window.location.origin && origem.pathname !== window.location.pathname) {
-        evento.preventDefault();
-        window.history.back();
-      }
-    } catch (_) {
-      // O href explícito continua sendo o fallback para links diretos.
-    }
-  });
-}
-
 // Abre/fecha o painel de filtros e mantém o contador do botão em dia.
 //
 // Só isso: quem aplica o filtro continua sendo o htmx (site dinâmico) ou o
