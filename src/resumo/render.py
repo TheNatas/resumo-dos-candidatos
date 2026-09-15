@@ -249,9 +249,6 @@ def render_site(
             out / "candidato" / sq / "index.html",
             env.get_template("candidate.html").render(
                 d=detail,
-                # The static filter is kept in the browser, so the ficha cannot
-                # reconstruct its transient DOM state. It must still have a real
-                # destination instead of an empty back link.
                 back_url=f"{base_url}/",
             ),
         )

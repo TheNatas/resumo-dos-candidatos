@@ -200,6 +200,34 @@ def get_proposals(session: Session, sq: str) -> list[GovernmentProposal]:
     )
 
 
+def get_proposals_with_party_fallback(
+    session: Session, candidacy: Candidacy
+) -> tuple[list[GovernmentProposal], bool]:
+    """Return the candidacy's proposals, or same-party proposals for the election.
+
+    Senators do not file a TSE proposta de governo. When their candidacy has no PDF,
+    a proposal filed by another candidacy of the same party and election is the
+    closest official party-program reference available in this dataset.
+    """
+    proposals = get_proposals(session, candidacy.sq_candidato)
+    if proposals or not candidacy.sg_partido:
+        return proposals, False
+
+    party_proposals = list(
+        session.execute(
+            select(GovernmentProposal)
+            .join(Candidacy, GovernmentProposal.sq_candidato == Candidacy.sq_candidato)
+            .where(
+                Candidacy.ano_eleicao == candidacy.ano_eleicao,
+                Candidacy.sg_partido == candidacy.sg_partido,
+                Candidacy.sq_candidato != candidacy.sq_candidato,
+            )
+            .order_by(GovernmentProposal.original_filename, GovernmentProposal.id)
+        ).scalars()
+    )
+    return party_proposals, bool(party_proposals)
+
+
 def get_photo(session: Session, sq: str) -> CandidatePhoto | None:
     return session.get(CandidatePhoto, sq)
 
@@ -857,7 +885,7 @@ def candidate_detail(
         track = track_record_summary(session, mandate.id, mandate.house)
         amendments = amendments_summary(session, mandate.id)
     photo = get_photo(session, sq)
-    proposals = get_proposals(session, sq)
+    proposals, party_fallback = get_proposals_with_party_fallback(session, cand)
     # Which of these PDFs are shared with other candidacies — resolved once for the
     # whole list rather than per row.
     scopes = shared_proposal_scopes(session, proposals, ano_eleicao=cand.ano_eleicao)
@@ -880,7 +908,20 @@ def candidate_detail(
                 # Whose document this is, when the same file turns up under more than
                 # one candidacy — flagged next to the link so the reader knows before
                 # opening it.
-                **_proposal_scope_payload(scopes.get(p.content_hash)),
+                **(
+                    {
+                        "scope": "party",
+                        "scope_label": "Documento do partido",
+                        "scope_note": (
+                            f"Nenhuma proposta foi encontrada para esta candidatura. "
+                            f"Documento encontrado em outra candidatura do {cand.sg_partido} "
+                            f"na eleição de {cand.ano_eleicao}."
+                        ),
+                        "shared_with": 0,
+                    }
+                    if party_fallback
+                    else _proposal_scope_payload(scopes.get(p.content_hash))
+                ),
                 # Build-time only: the static renderer needs to find the file on disk
                 # to copy it. Underscored and opt-in so it can never reach the public
                 # payload by default.

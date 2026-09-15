@@ -392,6 +392,34 @@ def test_proposal_shared_across_parties_is_not_called_the_party_s(session):
     assert "(PL, PP)" in proposal["scope_note"]
 
 
+def test_candidate_without_proposal_gets_same_party_proposal_for_the_election(session):
+    session.add_all(
+        [
+            _majoritario("S1", "SENADOR", partido="PT"),
+            _majoritario("G1", "GOVERNADOR", partido="PT"),
+            _majoritario("OLD", "PT 2022", partido="PT", ano=2022),
+        ]
+    )
+    session.add_all(
+        [
+            _proposal("G1", "programa-pt-2026.pdf", "pt-2026"),
+            _proposal("OLD", "programa-pt-2022.pdf", "pt-2022"),
+        ]
+    )
+    session.commit()
+
+    detail = client.get("/api/candidates/S1").json()
+    assert [p["filename"] for p in detail["proposals"]] == ["programa-pt-2026.pdf"]
+    proposal = detail["proposals"][0]
+    assert proposal["scope"] == "party"
+    assert proposal["scope_label"] == "Documento do partido"
+    assert "outra candidatura do PT" in proposal["scope_note"]
+
+    page = client.get("/candidato/S1").text
+    assert "programa-pt-2026.pdf" in page
+    assert "Documento do partido" in page
+
+
 def test_photo_route_serves_the_stored_file(session, tmp_path, monkeypatch):
     from tests.helpers import TINY_JPEG
 
