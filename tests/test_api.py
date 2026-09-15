@@ -38,7 +38,7 @@ def _seed_incumbent(session):
         Candidacy(
             sq_candidato="C1", ano_eleicao=2026, sg_uf="SC", cd_cargo=6, ds_cargo="DEPUTADO FEDERAL",
             nome_candidato="JOSE DA SILVA", nome_urna="JOSE", nome_normalizado="JOSE DA SILVA",
-            sg_partido="PT", is_majoritario=False,
+            nr_candidato="1313", sg_partido="PT", is_majoritario=False,
         )
     )
     # an unlinked candidacy
@@ -98,6 +98,7 @@ def test_html_pages_render(session):
     page = client.get("/candidato/C1")
     assert page.status_code == 200
     assert "Histórico de atuação" in page.text
+    assert "JOSE · nº 1313" in client.get("/", params={"q": "jose"}).text
     assert "12345678909" not in page.text
     assert "123.456.789-09" not in page.text
     # unconfirmed shows the guard text, not a guessed link

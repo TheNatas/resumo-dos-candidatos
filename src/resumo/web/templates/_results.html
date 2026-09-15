@@ -21,7 +21,7 @@
         <span class="thumb thumb-vazio" aria-hidden="true">{{ c.iniciais }}</span>
       {% endif %}
       <span class="card-texto">
-        <strong>{{ c.nome_urna or c.nome }}</strong>
+        <strong>{{ c.nome_urna or c.nome }}{% if c.numero %} · nº {{ c.numero }}{% endif %}</strong>
         <span class="meta">{{ c.cargo }} · {{ c.uf }} · {{ c.partido }} · {{ c.ano }}</span>
         {# Só o lado positivo vira selo, pela mesma razão que só ele vira filtro:
            a ausência de vínculo aceito não afirma que a pessoa NÃO tem mandato.

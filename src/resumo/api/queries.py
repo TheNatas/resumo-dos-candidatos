@@ -909,6 +909,7 @@ def _candidacy_summary(
         "sq_candidato": c.sq_candidato,
         "nome": c.nome_candidato,
         "nome_urna": c.nome_urna,
+        "numero": c.nr_candidato,
         # None when TSE published no photo for this candidacy — the page draws the
         # initials block instead of leaving a broken image where a face should be.
         "foto_url": f"/foto/{c.sq_candidato}.jpg" if has_photo else None,
