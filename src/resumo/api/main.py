@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
@@ -148,12 +149,35 @@ def about(request: Request):
 
 @app.get("/candidato/{sq_candidato}", response_class=HTMLResponse)
 def candidate_page(
-    request: Request, sq_candidato: str, session: Session = Depends(get_session)
+    request: Request,
+    sq_candidato: str,
+    q: str | None = None,
+    cargo: str | None = None,
+    partido: str | None = None,
+    reeleicao: str | None = None,
+    session: Session = Depends(get_session),
 ):
     detail = queries.candidate_detail(session, sq_candidato)
     if detail is None:
         return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
-    return templates.TemplateResponse(request, "candidate.html", {"d": detail})
+    # Build the back URL, restoring any active filters so the user lands on the
+    # filtered list rather than the empty default state.
+    back_params = {}
+    if q:
+        back_params["q"] = q
+    if cargo:
+        back_params["cargo"] = cargo
+    if partido:
+        back_params["partido"] = partido
+    if reeleicao:
+        back_params["reeleicao"] = reeleicao
+    settings = get_settings()
+    base = settings.site_base_url
+    if back_params:
+        back_url = f"{base}/?" + urlencode(back_params)
+    else:
+        back_url = f"{base}/"
+    return templates.TemplateResponse(request, "candidate.html", {"d": detail, "back_url": back_url})
 
 
 @app.get("/candidato/{sq_candidato}/{secao}", response_class=HTMLResponse)

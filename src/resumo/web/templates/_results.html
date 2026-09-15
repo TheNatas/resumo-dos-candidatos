@@ -4,7 +4,13 @@
   <li class="card" data-norm="{{ c.nome_normalizado or '' }}{{ ' ' }}{{ (c.nome_urna or '')|upper }}"
       data-cargo="{{ c.cargo or '' }}" data-partido="{{ c.partido or '' }}"
       data-reeleicao="{{ 'sim' if c.incumbent_confirmed else 'nao' }}">
-    <a href="{{ base_url }}/candidato/{{ c.sq_candidato }}">
+    {%- set back_params = [] -%}
+    {%- if q %}{% set _ = back_params.append('q=' ~ q | urlencode) %}{% endif -%}
+    {%- if cargo %}{% set _ = back_params.append('cargo=' ~ cargo | urlencode) %}{% endif -%}
+    {%- if partido %}{% set _ = back_params.append('partido=' ~ partido | urlencode) %}{% endif -%}
+    {%- if reeleicao %}{% set _ = back_params.append('reeleicao=' ~ reeleicao | urlencode) %}{% endif -%}
+    {%- set back_qs = ('?' ~ back_params | join('&')) if back_params else '' -%}
+    <a href="{{ base_url }}/candidato/{{ c.sq_candidato }}{{ back_qs }}">
       {# alt="" de propósito: o nome está no mesmo link, e descrever a foto de novo
          faria o leitor de tela anunciar a mesma pessoa duas vezes. `loading=lazy`
          importa aqui — o site estático traz TODAS as candidaturas do escopo nesta
