@@ -578,6 +578,8 @@ def test_vote_listing_shows_what_was_voted_on_and_the_party_line(session):
 
     html = client.get("/candidato/C1/votos").text
     assert "divergiu" in html and "seguiu" in html
+    assert "Matéria:</strong> proposição ou assunto votado" in html
+    assert 'scope="col">Orientação do partido' in html
     # A matéria vira link para a ficha de tramitação da Câmara.
     assert "fichadetramitacao?idProposicao=2471267" in html
 
@@ -604,6 +606,8 @@ def test_expense_listing_keeps_the_glosa_and_the_refund_sign(session):
     html = client.get("/candidato/C1/gastos").text
     assert "R$ 50,00" in html              # glosa exibida, não somada nem escondida
     assert "R$ -539,00" in html            # devolução mantém o sinal
+    assert "Fornecedor:</strong> pessoa ou empresa que recebeu o pagamento" in html
+    assert "Glosa:</strong> valor recusado pela Casa" in html
     assert "https://camara.leg.br/recibo/2" in html
 
 

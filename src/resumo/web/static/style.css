@@ -118,6 +118,9 @@ section h3 { font-size:.85rem; text-transform:uppercase; letter-spacing:.04em; c
    contêiner em vez de quebrar a tabela: no celular, uma linha de despesa espremida
    em duas alturas fica ilegível justamente onde o valor precisa ser lido. */
 .detalhe { width:100%; border-collapse:collapse; margin-top:.8rem; font-size:.85rem; display:block; overflow-x:auto; white-space:nowrap; }
+.detalhe .table-legend { display:flex; flex-wrap:wrap; gap:.2rem .8rem; white-space:normal; text-align:left; caption-side:top; color:var(--muted); font-size:.78rem; line-height:1.45; margin-bottom:.35rem; }
+.detalhe .table-legend > strong { color:var(--ink); }
+.detalhe .table-legend span strong { color:var(--ink); }
 .detalhe thead th { text-align:left; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.03em; font-weight:600; border-bottom:1px solid var(--line); padding:.5rem .6rem; }
 .detalhe td { border-bottom:1px solid var(--line); padding:.5rem .6rem; vertical-align:top; }
 .detalhe tr:last-child td { border-bottom:0; }

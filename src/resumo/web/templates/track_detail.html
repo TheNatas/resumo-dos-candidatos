@@ -24,8 +24,14 @@
     <p class="note">{{ d.rows|length }} voto(s) nominal(is), do mais recente para o
       mais antigo.</p>
     <table class="detalhe detalhe--{{ d.secao }}">
+      <caption class="table-legend"><strong>Legenda:</strong>
+        <span><strong>Data:</strong> dia da votação.</span>
+        <span><strong>Matéria:</strong> proposição ou assunto votado.</span>
+        <span><strong>Voto:</strong> posição registrada pelo parlamentar.</span>
+        <span><strong>Orientação do partido:</strong> posição recomendada pela bancada e se o voto a seguiu.</span>
+      </caption>
       <thead>
-        <tr><th>Data</th><th>Matéria</th><th>Voto</th><th>Orientação do partido</th></tr>
+        <tr><th scope="col">Data</th><th scope="col">Matéria</th><th scope="col">Voto</th><th scope="col">Orientação do partido</th></tr>
       </thead>
       <tbody>
         {% for r in d.rows %}
@@ -63,7 +69,13 @@
       {% if d.is_legislative %}proposição(ões) de autoria{% else %}ato(s) apresentado(s)
       à Assembleia{% endif %}, da mais recente para a mais antiga.</p>
     <table class="detalhe detalhe--{{ d.secao }}">
-      <thead><tr><th>Código</th><th>Ementa</th><th>Entrada</th><th>Situação</th></tr></thead>
+      <caption class="table-legend"><strong>Legenda:</strong>
+        <span><strong>Código:</strong> identificador oficial do registro.</span>
+        <span><strong>Ementa:</strong> resumo do conteúdo da proposição ou ato.</span>
+        <span><strong>Entrada:</strong> data em que foi apresentado.</span>
+        <span><strong>Situação:</strong> estado atual da tramitação.</span>
+      </caption>
+      <thead><tr><th scope="col">Código</th><th scope="col">Ementa</th><th scope="col">Entrada</th><th scope="col">Situação</th></tr></thead>
       <tbody>
         {% for r in d.rows %}
           <tr>
@@ -84,9 +96,17 @@
       recente para o mais antigo. Valores negativos são devoluções, e o sinal é
       mantido — tirá-lo inflaria o total com dinheiro que voltou.</p>
     <table class="detalhe detalhe--{{ d.secao }}">
+      <caption class="table-legend"><strong>Legenda:</strong>
+        <span><strong>Competência:</strong> mês e ano a que o lançamento se refere.</span>
+        <span><strong>Rubrica:</strong> categoria da despesa.</span>
+        <span><strong>Fornecedor:</strong> pessoa ou empresa que recebeu o pagamento.</span>
+        <span><strong>Líquido:</strong> valor considerado para o pagamento ou reembolso.</span>
+        <span><strong>Glosa:</strong> valor recusado pela Casa.</span>
+        <span><strong>Doc.:</strong> link para o documento comprobatório, quando disponível.</span>
+      </caption>
       <thead>
-        <tr><th>Competência</th><th>Rubrica</th><th>Fornecedor</th>
-          <th class="col-valor">Líquido</th><th class="col-valor">Glosa</th><th>Doc.</th></tr>
+        <tr><th scope="col">Competência</th><th scope="col">Rubrica</th><th scope="col">Fornecedor</th>
+          <th scope="col" class="col-valor">Líquido</th><th scope="col" class="col-valor">Glosa</th><th scope="col">Doc.</th></tr>
       </thead>
       <tbody>
         {% for r in d.rows %}
