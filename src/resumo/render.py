@@ -247,7 +247,13 @@ def render_site(
             summary["foto_url"] = None
         _write(
             out / "candidato" / sq / "index.html",
-            env.get_template("candidate.html").render(d=detail),
+            env.get_template("candidate.html").render(
+                d=detail,
+                # The static filter is kept in the browser, so the ficha cannot
+                # reconstruct its transient DOM state. It must still have a real
+                # destination instead of an empty back link.
+                back_url=f"{base_url}/",
+            ),
         )
         _write_json(out / "api" / "candidates" / f"{sq}.json", detail)
         # As listagens por trás dos contadores. Só existem para quem tem histórico, e

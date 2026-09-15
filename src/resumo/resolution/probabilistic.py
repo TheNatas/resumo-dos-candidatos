@@ -4,12 +4,10 @@ Self-contained rapidfuzz scorer (works out of the box, no heavy deps). For
 production-grade Fellegi-Sunter linkage at national scale, swap this for Splink
 (`uv sync --extra resolution`) — the pipeline only needs `best_match`.
 
-**Corroboration cap.** A name is not an identifier. Where the house publishes no
-CPF, no título and no birth date (ALESC gives name only; the Senado gives name +
-DOB), a perfect string match still scores 1.0 — which would silently promote an
-unverifiable guess to the same tier as a CPF match. So a match with nothing
-corroborating the name is capped below the auto_strong threshold: it can still be
-published, but as auto_weak, and the tier is shown on the ficha.
+**Corroboration gate.** A name is not an identifier. Where the house publishes no
+CPF, no título and no birth date (ALESC gives name only), a fuzzy match can silently
+attach one person's history to another. Matches with nothing corroborating the name
+are therefore sent to review instead of being published.
 """
 
 from __future__ import annotations
@@ -20,9 +18,7 @@ from rapidfuzz.distance import JaroWinkler
 
 from resumo.resolution.records import CandRec, PersonRec
 
-# Ceiling for a match backed by nothing but the name. Sits below pipeline.STRONG
-# (0.95) and above pipeline.WEAK (0.88), so a perfect name-only match lands in
-# auto_weak rather than auto_strong.
+# Retained as a score ceiling for callers that inspect name-only matches directly.
 NAME_ONLY_CAP = 0.93
 
 

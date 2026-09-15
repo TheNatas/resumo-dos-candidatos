@@ -127,28 +127,31 @@ def test_active_mandate_wins_over_ended_one(session):
     assert recs[0].mandate_id == active.id
 
 
-# ── tiering: a name-only match must not reach auto_strong ────────────────────
+# ── name-only matches must not become public links ───────────────────────────
 def _candidacy(session, sq, **kw):
     defaults = dict(ano_eleicao=2026, nr_turno=1, sg_uf="SC", cd_cargo=7)
     defaults.update(kw)
     session.add(Candidacy(sq_candidato=sq, **defaults))
 
 
-def test_name_only_match_is_capped_at_auto_weak(session):
-    """An ALESC-style mandate has no CPF and no birth date. A perfect name match is
-    still only a name match, and must be published as auto_weak — never as the same
-    tier as a CPF match."""
-    p = resolve_person(session, nome_civil="JOAO DA COSTA")
-    _mandate(session, p, House.ASSEMBLEIA, "joao-da-costa")
-    _candidacy(session, "E1", nome_normalizado="JOAO DA COSTA", cpf_raw=None, data_nascimento=None)
+def test_name_only_match_is_sent_to_review(session):
+    """An ALESC-style mandate has no CPF and no birth date, so a name match needs
+    human confirmation before it can publish a person's history."""
+    p = resolve_person(session, nome_civil="CAROLLINE SARDA")
+    _mandate(session, p, House.ASSEMBLEIA, "carolline-sarda")
+    _candidacy(
+        session, "E1", nome_normalizado="CAROLINE SANTANNA", cpf_raw=None,
+        data_nascimento=None,
+    )
     session.commit()
 
     resolve(session, year=2026)
     session.commit()
 
-    link = session.scalar(select(CandidateMandateLink))
-    assert link is not None, "a name-only match should still publish, just at a lower tier"
-    assert link.confidence_tier is ConfidenceTier.auto_weak
+    assert session.scalar(select(CandidateMandateLink)) is None
+    review = session.scalar(select(ReviewQueue))
+    assert review is not None
+    assert "name only" in review.reason
 
 
 def test_matching_dob_still_reaches_auto_strong(session):
