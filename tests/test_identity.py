@@ -20,6 +20,7 @@ from resumo.db.models import (
     House,
     Mandate,
     Person,
+    ReviewQueue,
 )
 from resumo.resolution.identity import resolve_person
 from resumo.resolution.pipeline import resolve
