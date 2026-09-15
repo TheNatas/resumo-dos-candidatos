@@ -87,6 +87,22 @@
   var count = document.getElementById("count");
   var cards = Array.prototype.slice.call(document.querySelectorAll("#results .card"));
 
+  function syncNavigation() {
+    var params = new URLSearchParams();
+    if (q.value) params.set("q", q.value);
+    if (cargo.value) params.set("cargo", cargo.value);
+    if (partido.value) params.set("partido", partido.value);
+    if (reeleicao.checked) params.set("reeleicao", reeleicao.value);
+    var search = params.toString();
+    window.history.replaceState(null, "", search ? "?" + search : window.location.pathname);
+    Array.prototype.slice.call(document.querySelectorAll("#results a[href*='/candidato/']"))
+      .forEach(function (link) {
+        var destino = new URL(link.href, window.location.href);
+        destino.search = search;
+        link.href = destino.pathname + destino.search;
+      });
+  }
+
   function apply() {
     var nq = norm(q.value);
     var nc = cargo.value;
@@ -106,6 +122,7 @@
     }
     empty.hidden = shown > 0;
     count.textContent = shown === 1 ? "1 candidatura" : shown + " candidaturas";
+    syncNavigation();
   }
 
   q.addEventListener("input", apply);
