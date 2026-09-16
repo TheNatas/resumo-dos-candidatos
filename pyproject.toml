@@ -51,6 +51,7 @@ addopts = "-ra"
 
 [tool.mutmut]
 source_paths = ["src/resumo/api/queries.py"]
+also_copy = ["src/resumo"]
 pytest_add_cli_args_test_selection = ["tests/test_api.py", "tests/test_contracts.py"]
 process_isolation = "forkserver"
 forkserver_warmup = "none"
