@@ -20,7 +20,7 @@ import uuid
 from collections import Counter
 from collections.abc import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from resumo import attendance as att
@@ -36,12 +36,14 @@ from resumo.db.models import (
     Candidacy,
     CandidateMandateLink,
     CandidatePhoto,
+    CandidateSocialLink,
     ConfidenceTier,
     Expense,
     GovernmentProposal,
     House,
     Mandate,
     MandateLeave,
+    PartyProposal,
     Proposition,
     Vote,
 )
@@ -202,7 +204,7 @@ def get_proposals(session: Session, sq: str) -> list[GovernmentProposal]:
 
 def get_proposals_with_party_fallback(
     session: Session, candidacy: Candidacy
-) -> tuple[list[GovernmentProposal], bool]:
+) -> tuple[list[GovernmentProposal | PartyProposal], bool]:
     """Return the candidacy's proposals, or same-party proposals for the election.
 
     Senators do not file a TSE proposta de governo. When their candidacy has no PDF,
@@ -213,7 +215,7 @@ def get_proposals_with_party_fallback(
     if proposals or not candidacy.sg_partido:
         return proposals, False
 
-    party_proposals = list(
+    tse_party_proposals = list(
         session.execute(
             select(GovernmentProposal)
             .join(Candidacy, GovernmentProposal.sq_candidato == Candidacy.sq_candidato)
@@ -225,7 +227,20 @@ def get_proposals_with_party_fallback(
             .order_by(GovernmentProposal.original_filename, GovernmentProposal.id)
         ).scalars()
     )
-    return party_proposals, bool(party_proposals)
+    if tse_party_proposals:
+        return tse_party_proposals, True
+
+    return list(
+        session.execute(
+            select(PartyProposal)
+            .where(
+                PartyProposal.ano_eleicao == candidacy.ano_eleicao,
+                PartyProposal.party_sigla == candidacy.sg_partido,
+                or_(PartyProposal.uf == candidacy.sg_uf, PartyProposal.uf.is_(None)),
+            )
+            .order_by(PartyProposal.uf.desc(), PartyProposal.title, PartyProposal.id)
+        ).scalars()
+    ), True
 
 
 def get_photo(session: Session, sq: str) -> CandidatePhoto | None:
@@ -885,15 +900,51 @@ def candidate_detail(
         track = track_record_summary(session, mandate.id, mandate.house)
         amendments = amendments_summary(session, mandate.id)
     photo = get_photo(session, sq)
+    social_links = list(
+        session.execute(
+            select(CandidateSocialLink)
+            .where(CandidateSocialLink.sq_candidato == sq)
+            .order_by(CandidateSocialLink.network, CandidateSocialLink.url)
+        ).scalars()
+    )
     proposals, party_fallback = get_proposals_with_party_fallback(session, cand)
     # Which of these PDFs are shared with other candidacies — resolved once for the
     # whole list rather than per row.
-    scopes = shared_proposal_scopes(session, proposals, ano_eleicao=cand.ano_eleicao)
+    candidate_proposals = [p for p in proposals if isinstance(p, GovernmentProposal)]
+    scopes = shared_proposal_scopes(session, candidate_proposals, ano_eleicao=cand.ano_eleicao)
+
+    def proposal_scope(proposal: GovernmentProposal | PartyProposal) -> dict:
+        if isinstance(proposal, PartyProposal):
+            return {
+                "scope": proposal.source_type,
+                "scope_label": "Programa oficial do partido",
+                "scope_note": (
+                    f"Documento publicado por fonte oficial do {cand.sg_partido}; "
+                    "não foi localizado um arquivo específico desta candidatura."
+                ),
+                "shared_with": 0,
+            }
+        if party_fallback:
+            return {
+                "scope": "party",
+                "scope_label": "Documento do partido",
+                "scope_note": (
+                    f"Nenhuma proposta foi encontrada para esta candidatura. "
+                    f"Documento encontrado em outra candidatura do {cand.sg_partido} "
+                    f"na eleição de {cand.ano_eleicao}."
+                ),
+                "shared_with": 0,
+            }
+        return _proposal_scope_payload(scopes.get(proposal.content_hash))
+
     return {
         "candidacy": _candidacy_summary(
             cand, incumbent_confirmed=accepted is not None, has_photo=photo is not None
         ),
         "photo": _photo_payload(photo, include_storage_path=include_storage_path),
+        "social_links": [
+            {"network": link.network, "url": link.url} for link in social_links
+        ],
         "proposals": [
             # `storage_path` is a server filesystem path and must not leave the
             # process: it leaks the deploy's directory layout and gives a reader
@@ -902,26 +953,14 @@ def candidate_detail(
             # the point of collecting it.
             {
                 "id": str(p.id),
-                "source": p.source,
+                "source": p.source if isinstance(p, GovernmentProposal) else p.source_type,
                 "filename": p.original_filename,
                 "url": f"/proposta/{p.id}.pdf",
+                **({"source_url": p.source_url} if isinstance(p, PartyProposal) else {}),
                 # Whose document this is, when the same file turns up under more than
                 # one candidacy — flagged next to the link so the reader knows before
                 # opening it.
-                **(
-                    {
-                        "scope": "party",
-                        "scope_label": "Documento do partido",
-                        "scope_note": (
-                            f"Nenhuma proposta foi encontrada para esta candidatura. "
-                            f"Documento encontrado em outra candidatura do {cand.sg_partido} "
-                            f"na eleição de {cand.ano_eleicao}."
-                        ),
-                        "shared_with": 0,
-                    }
-                    if party_fallback
-                    else _proposal_scope_payload(scopes.get(p.content_hash))
-                ),
+                **proposal_scope(p),
                 # Build-time only: the static renderer needs to find the file on disk
                 # to copy it. Underscored and opt-in so it can never reach the public
                 # payload by default.

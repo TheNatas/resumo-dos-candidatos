@@ -17,6 +17,7 @@ from resumo.db.models import (
     House,
     Mandate,
     MatchMethod,
+    PartyProposal,
     Person,
     Vote,
 )
@@ -428,7 +429,30 @@ def test_candidate_without_proposal_gets_same_party_proposal_for_the_election(se
 
     page = client.get("/candidato/S1").text
     assert "programa-pt-2026.pdf" in page
-    assert "Documento do partido" in page
+
+
+def test_candidate_without_tse_proposal_gets_official_national_party_document(session):
+    session.add(_majoritario("S2", "SENADOR PSOL", partido="PSOL"))
+    session.add(
+        PartyProposal(
+            party_sigla="PSOL",
+            ano_eleicao=2026,
+            uf=None,
+            source_type="party_website",
+            source_url="https://psol.org.br/programa-2026.pdf",
+            verification_method="official_domain_pdf",
+            title="Programa do PSOL 2026",
+            original_filename="programa-psol-2026.pdf",
+            storage_path=None,
+            content_hash="psol-2026",
+        )
+    )
+    session.commit()
+
+    proposal = client.get("/api/candidates/S2").json()["proposals"][0]
+    assert proposal["filename"] == "programa-psol-2026.pdf"
+    assert proposal["source_url"] == "https://psol.org.br/programa-2026.pdf"
+    assert proposal["scope_label"] == "Programa oficial do partido"
 
 
 def test_photo_route_serves_the_stored_file(session, tmp_path, monkeypatch):

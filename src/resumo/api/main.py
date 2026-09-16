@@ -17,7 +17,7 @@ from resumo.api import queries
 from resumo.api.deps import get_session
 from resumo.api.routers import candidates
 from resumo.config import get_settings
-from resumo.db.models import CandidatePhoto, GovernmentProposal
+from resumo.db.models import CandidatePhoto, GovernmentProposal, PartyProposal
 from resumo.sources import source_portals
 from resumo.util import ano_range, brl
 
@@ -219,7 +219,7 @@ def candidate_photo(sq_candidato: str, session: Session = Depends(get_session)):
 def proposta_pdf(proposal_id: uuid.UUID, session: Session = Depends(get_session)):
     """Serve a collected proposta de governo. Kept as its own route (not StaticFiles)
     so the URL is the stable proposal id rather than the storage layout."""
-    proposal = session.get(GovernmentProposal, proposal_id)
+    proposal = session.get(GovernmentProposal, proposal_id) or session.get(PartyProposal, proposal_id)
     if proposal is None or not proposal.storage_path:
         raise HTTPException(status_code=404, detail="proposta não encontrada")
     path = Path(proposal.storage_path).resolve()

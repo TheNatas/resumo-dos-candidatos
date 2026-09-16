@@ -59,10 +59,61 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --extra dev
-      - run: uv run pytest -q
+      # Browser coverage runs in its own job because Chromium is not needed by the
+      # database suite and is expensive to install on every test worker.
+      - run: uv run pytest -q --ignore=tests/test_browser.py
+
+  browser:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: resumo
+          POSTGRES_PASSWORD: resumo
+          POSTGRES_DB: resumo
+        ports: ["5439:5432"]
+        options: >-
+          --health-cmd "pg_isready -U resumo -d resumo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest -q tests/test_browser.py
+
+  mutation:
+    # Mutation testing is a quality signal, not a prerequisite for publishing a
+    # site. mutmut's worker isolation is not reliable with this Postgres fixture
+    # on every runner, so this remains advisory until that upstream interaction is
+    # replaced with a subprocess-safe test database.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: resumo
+          POSTGRES_PASSWORD: resumo
+          POSTGRES_DB: resumo
+        ports: ["5439:5432"]
+        options: >-
+          --health-cmd "pg_isready -U resumo -d resumo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run mutmut run --max-children 2
+      - run: uv run mutmut results
 
   render:
-    needs: [validate, test]
+    needs: [validate, test, browser]
     runs-on: ubuntu-latest
     services:
       db:

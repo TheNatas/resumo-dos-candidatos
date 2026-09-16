@@ -28,8 +28,10 @@ dependencies = [
 resolution = ["splink>=4.0"]
 dev = [
     "pytest>=8.2",
+    "playwright>=1.50",
     "respx>=0.21",
     "ruff>=0.5",
+    "mutmut>=3.3",
 ]
 
 [project.scripts]
@@ -46,6 +48,12 @@ packages = ["src/resumo"]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.mutmut]
+source_paths = ["src/resumo/api/queries.py"]
+pytest_add_cli_args_test_selection = ["tests/test_api.py", "tests/test_contracts.py"]
+process_isolation = "forkserver"
+forkserver_warmup = "none"
 
 [tool.ruff]
 line-length = 100

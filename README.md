@@ -54,6 +54,26 @@ Ampliar é trocar variáveis de ambiente: `RESUMO_TARGET_UFS=""` roda nacional,
 | **CGU — `EmendasParlamentares.zip`** | emendas parlamentares individuais (empenhado/liquidado/pago) | — |
 
 **Nenhuma fonte exige chave de API.** Para emendas isso foi uma escolha: a API do
+
+### Propostas oficiais de partidos
+
+Quando o TSE não tem um PDF para a candidatura nem para outra candidatura do mesmo
+partido, o coletor também rastreia os domínios oficiais registrados em
+`party-official-sources.json`. Ele segue somente links do próprio domínio, limita a
+quantidade de páginas e baixa PDFs cujo endereço ou texto indica programa, proposta,
+plano, diretriz, eleição, governo ou 2026. Uma publicação social pode apontar para um
+PDF oficial, mas redes sociais não são rastreadas de forma ampla: páginas públicas
+mudam, bloqueiam robôs e frequentemente exigem login. O PDF precisa continuar em uma
+fonte oficial do partido para ser armazenado.
+
+```bash
+uv run resumo collect party-proposals --discover --party PSOL --domain https://psol.org.br
+```
+
+A busca segue esta ordem: PDF da candidatura no TSE, PDF de outra candidatura do
+partido no TSE, documento oficial estadual, documento oficial nacional e, por último,
+um PDF oficial encontrado a partir de uma referência social. A ficha identifica esses
+documentos como **Programa oficial do partido**, sem atribuí-los à candidatura.
 Portal da Transparência exigiria `chave-api-dados`, devolve 15 linhas por página e não
 filtra por UF — enquanto o arquivo em lote da CGU é *mais rico* (traz município, UF,
 programa e ação, que a API não devolve).
@@ -392,9 +412,27 @@ docker compose up -d
 uv run pytest -q
 ```
 
-Cobre parsing TSE Latin-1, filtro de UF/cargo, idempotência incluindo mudança de
-escopo, paginação da Câmara (mock respx), taxonomia de cargos, identidade entre casas,
-regras de resolução e o gating do histórico na API. Sem chamadas de rede.
+The full suite covers parsing TSE Latin-1, UF/cargo filtering, idempotency including
+scope changes, Câmara pagination (mocked with respx), office taxonomy, cross-house
+identity, resolution rules, and API history gating. It uses no network calls.
+
+```bash
+# Fast regression slice for API, templates, and live/static parity
+uv run pytest -q tests/test_api.py tests/test_contracts.py tests/test_render.py
+
+# Real Chromium smoke test for filters and back navigation
+uv run playwright install chromium
+uv run pytest -q tests/test_browser.py
+
+# Mutation testing for the query and filtering rules
+uv run mutmut run
+uv run mutmut results
+```
+
+The API endpoints have strict response models, and the contract tests compare live
+JSON with the JSON emitted by the static renderer. Every navigation or filter bug
+should add a focused API/template assertion and, when interaction is involved, a
+browser-flow assertion in `tests/test_browser.py`.
 
 ## Conformidade
 

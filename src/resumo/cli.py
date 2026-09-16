@@ -112,6 +112,29 @@ def tse_proposta(
     _run(PropostaGovernoCollector(), year=year, uf=uf, source=source)
 
 
+@collect.command("party-proposals")
+def party_proposals(
+    manifest: Optional[Path] = typer.Option(None, "--manifest", help="JSON de fontes oficiais"),
+    discover: bool = typer.Option(False, "--discover", help="Rastrear domínios oficiais"),
+    party: Optional[str] = typer.Option(None, "--party", help="Sigla do partido"),
+    domains: Optional[str] = typer.Option(None, "--domain", help="Domínios oficiais, separados por vírgula"),
+    year: Optional[int] = None,
+    uf: Optional[str] = typer.Option(None, "--uf", help="UF do programa estadual"),
+) -> None:
+    """Importar propostas ou rastrear PDFs em fontes oficiais de partidos."""
+    from resumo.ingestion.party_proposals import PartyProposalCollector
+
+    _run(
+        PartyProposalCollector(),
+        manifest=manifest,
+        discover=discover,
+        party=party,
+        domains=[d.strip() for d in domains.split(",") if d.strip()] if domains else None,
+        year=year,
+        uf=uf,
+    )
+
+
 @collect.command("tse-fotos")
 def tse_fotos(
     year: Optional[int] = None,
@@ -122,6 +145,18 @@ def tse_fotos(
     from resumo.ingestion.tse.foto_candidato import FotoCandidatoCollector
 
     _run(FotoCandidatoCollector(), year=year, uf=uf, source=source)
+
+
+@collect.command("tse-redes-sociais")
+def tse_redes_sociais(
+    year: Optional[int] = None,
+    source: Optional[Path] = typer.Option(None, help="local zip/csv"),
+    uf: Optional[str] = _UF_OPT,
+) -> None:
+    """Links de redes sociais declarados no pacote oficial do TSE."""
+    from resumo.ingestion.tse.rede_social_candidato import RedeSocialCandidatoCollector
+
+    _run(RedeSocialCandidatoCollector(), year=year, source=source, ufs=_split(uf))
 
 
 @collect.command("tse-contas")

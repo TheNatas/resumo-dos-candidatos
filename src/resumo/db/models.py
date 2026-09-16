@@ -241,6 +241,7 @@ class Candidacy(Base):
     assets: Mapped[list[CandidateAsset]] = relationship(back_populates="candidacy")
     proposals: Mapped[list[GovernmentProposal]] = relationship(back_populates="candidacy")
     photo: Mapped[CandidatePhoto | None] = relationship(back_populates="candidacy")
+    social_links: Mapped[list[CandidateSocialLink]] = relationship(back_populates="candidacy")
     links: Mapped[list[CandidateMandateLink]] = relationship(back_populates="candidacy")
 
 
@@ -295,6 +296,26 @@ class GovernmentProposal(Base):
     candidacy: Mapped[Candidacy] = relationship(back_populates="proposals")
 
 
+class PartyProposal(Base):
+    """Official party proposal discovered outside the TSE candidacy filing."""
+
+    __tablename__ = "party_proposal"
+    __table_args__ = (UniqueConstraint("party_sigla", "ano_eleicao", "uf", "content_hash"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    party_sigla: Mapped[str] = mapped_column(String(32), index=True)
+    ano_eleicao: Mapped[int] = mapped_column(Integer, index=True)
+    uf: Mapped[str | None] = mapped_column(String(2), index=True)
+    source_type: Mapped[str] = mapped_column(String(32))  # party_website | party_social
+    source_url: Mapped[str] = mapped_column(String(1024))
+    verification_method: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str | None] = mapped_column(String(255))
+    storage_path: Mapped[str | None] = mapped_column(String(512))
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    fetched_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class CandidatePhoto(Base):
     """The registration photo the candidate filed with the Justiça Eleitoral.
     Source of truth: TSE per-UF `foto_cand<ano>_<UF>_div.zip`.
@@ -321,6 +342,20 @@ class CandidatePhoto(Base):
     fetched_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     candidacy: Mapped[Candidacy] = relationship(back_populates="photo")
+
+
+class CandidateSocialLink(Base):
+    """Official social profile declared in the TSE candidate-links package."""
+
+    __tablename__ = "candidate_social_link"
+    __table_args__ = (UniqueConstraint("sq_candidato", "network", "url"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    sq_candidato: Mapped[str] = mapped_column(ForeignKey("candidacy.sq_candidato"), index=True)
+    network: Mapped[str] = mapped_column(String(64))
+    url: Mapped[str] = mapped_column(String(1024))
+
+    candidacy: Mapped[Candidacy] = relationship(back_populates="social_links")
 
 
 # ── Legislative side ─────────────────────────────────────────────────────────

@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 
 from resumo.api import queries
 from resumo.api.deps import get_session
+from resumo.api.schemas import CandidateDetail, CandidateSummary
 from resumo.config import get_settings
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
 
-@router.get("")
+@router.get("", response_model=list[CandidateSummary])
 def list_candidates(
     q: str | None = Query(default=None, description="name search (accent-insensitive)"),
     uf: str | None = None,
@@ -30,7 +31,7 @@ def list_candidates(
     ),
     limit: int = Query(default=50, le=200),
     session: Session = Depends(get_session),
-) -> list[dict]:
+) -> list[CandidateSummary]:
     # Defaults to the deploy's election year so the public surface never mixes in the
     # historical validation set. Still overridable: an auditor comparing 2026 against
     # 2022 is a legitimate use, an accidental unscoped listing is not.
@@ -46,8 +47,10 @@ def list_candidates(
     )
 
 
-@router.get("/{sq_candidato}")
-def get_candidate(sq_candidato: str, session: Session = Depends(get_session)) -> dict:
+@router.get("/{sq_candidato}", response_model=CandidateDetail)
+def get_candidate(
+    sq_candidato: str, session: Session = Depends(get_session)
+) -> CandidateDetail:
     detail = queries.candidate_detail(session, sq_candidato)
     if detail is None:
         raise HTTPException(status_code=404, detail="candidatura não encontrada")

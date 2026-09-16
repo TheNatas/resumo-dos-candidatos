@@ -37,6 +37,18 @@
     <li><span>Resultado</span>{{ c.resultado or '—' }}</li>
   </ul>
 
+  {% if d.social_links %}
+  <section>
+    <h2>Redes sociais</h2>
+    <ul class="social-links">
+      {% for link in d.social_links %}
+        <li><a href="{{ link.url }}" rel="noopener noreferrer" target="_blank">{{ link.network }}</a></li>
+      {% endfor %}
+    </ul>
+    <p class="note">Links declarados pela candidatura no pacote oficial do TSE.</p>
+  </section>
+  {% endif %}
+
   <section>
     <h2>Proposta de governo</h2>
     {% if d.proposals %}
@@ -45,17 +57,21 @@
           <li>📄 <a href="{{ base_url }}{{ p.url }}">{{ p.filename or 'Proposta de governo' }}</a>
               {%- if p.scope_label %} <span class="badge badge-warn">{{ p.scope_label }}</span>{% endif %}
               <em>({{ p.source }})</em>
+              {% if p.source_url %}
+                <a href="{{ p.source_url }}" rel="noopener" target="_blank">fonte oficial</a>
+              {% endif %}
               {# Dito ANTES do clique: o leitor precisa saber que o PDF não é
                  específico da candidatura sem ter de abri-lo para descobrir. #}
               {% if p.scope_note %}<p class="note">{{ p.scope_note }}</p>{% endif %}</li>
         {% endfor %}
       </ul>
     {% elif c.requires_proposta %}
-      <p class="muted">Proposta de governo ainda não disponível para esta candidatura.</p>
+      <p class="muted">Nenhuma proposta da candidatura ou fonte oficial do partido foi encontrada.</p>
     {% else %}
       <p class="muted">
-        A proposta de governo é obrigatória apenas para cargos executivos
-        (presidente, governador, prefeito). Não se aplica a {{ c.cargo|lower }}.
+        Nenhuma proposta foi encontrada para esta candidatura ou em fonte oficial do partido.
+        A proposta de governo do TSE é obrigatória apenas para cargos executivos
+        (presidente, governador, prefeito), mas documentos partidários também são buscados.
       </p>
     {% endif %}
   </section>
