@@ -90,6 +90,14 @@ class RedeSocialCandidatoCollector(Collector):
             }
             rows = [r for r in (_social_row(row) for row in parsing.iter_records(data_path)) if r]
             rows = [r for r in rows if r["sq_candidato"] in known]
+            # The TSE export can repeat the same URL for a candidate. Collapse those
+            # rows before insertion because the database intentionally stores one
+            # declaration per candidate/network/URL.
+            rows = list(
+                {
+                    (row["sq_candidato"], row["network"], row["url"]): row for row in rows
+                }.values()
+            )
             # Replace the candidate's current declaration set so removed links do not linger.
             for sq in {r["sq_candidato"] for r in rows}:
                 session.execute(delete(CandidateSocialLink).where(CandidateSocialLink.sq_candidato == sq))
