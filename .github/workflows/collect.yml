@@ -162,7 +162,13 @@ jobs:
           }
 
           coletar uv run resumo collect tse-candidates
-          coletar uv run resumo collect tse-redes-sociais
+          SOCIAL_ZIP="$SNAPSHOT_DIR/rede_social_candidato_2026.zip"
+          if [ -f "$SOCIAL_ZIP" ]; then
+            echo "Usando pacote social manual: $SOCIAL_ZIP"
+            coletar uv run resumo collect tse-redes-sociais --source "$SOCIAL_ZIP"
+          else
+            coletar uv run resumo collect tse-redes-sociais
+          fi
           coletar uv run resumo collect tse-assets
           coletar uv run resumo collect tse-proposta
           coletar uv run resumo collect tse-fotos
