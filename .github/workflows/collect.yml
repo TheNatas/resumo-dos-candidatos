@@ -162,6 +162,7 @@ jobs:
           }
 
           coletar uv run resumo collect tse-candidates
+          coletar uv run resumo collect tse-redes-sociais
           coletar uv run resumo collect tse-assets
           coletar uv run resumo collect tse-proposta
           coletar uv run resumo collect tse-fotos
