@@ -146,6 +146,20 @@ def test_page_filters_by_partido(session):
     assert "JOSE" in filtered
     assert "ANA PEREIRA" not in filtered
 
+    multiple = client.get("/", params=[("partido", "PT"), ("partido", "PSDB")])
+    assert "JOSE" in multiple.text
+    assert "ANA PEREIRA" in multiple.text
+
+
+def test_api_filters_by_multiple_partidos(session):
+    _seed_incumbent(session)
+
+    listed = client.get(
+        "/api/candidates", params=[("partido", "pt"), ("partido", "PSDB")]
+    ).json()
+
+    assert [c["sq_candidato"] for c in listed] == ["C2", "C1"]
+
 
 def test_card_flags_confirmed_incumbent(session):
     _seed_incumbent(session)

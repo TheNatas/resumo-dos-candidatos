@@ -101,7 +101,7 @@ def search_candidacies(
     q: str | None = None,
     uf: str | None = None,
     cargo: str | None = None,
-    partido: str | None = None,
+    partido: Sequence[str] = (),
     reeleicao: bool | None = None,
     year: int | None = None,
     limit: int = 50,
@@ -119,10 +119,11 @@ def search_candidacies(
         stmt = stmt.where(Candidacy.sg_uf == uf.upper())
     if cargo:
         stmt = stmt.where(Candidacy.ds_cargo.ilike(f"%{cargo}%"))
-    if partido:
+    partidos = [sigla.upper() for sigla in partido if sigla]
+    if partidos:
         # Exact sigla, not a substring: "PP" inside "PPS"/"PSDB" would silently widen
         # a filter the reader chose precisely.
-        stmt = stmt.where(Candidacy.sg_partido == partido.upper())
+        stmt = stmt.where(Candidacy.sg_partido.in_(partidos))
     if reeleicao is not None:
         stmt = stmt.where(_CONFIRMED_REELECTION if reeleicao else ~_CONFIRMED_REELECTION)
     if year:

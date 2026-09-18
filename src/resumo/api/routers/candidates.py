@@ -18,7 +18,7 @@ def list_candidates(
     q: str | None = Query(default=None, description="name search (accent-insensitive)"),
     uf: str | None = None,
     cargo: str | None = None,
-    partido: str | None = Query(default=None, description="sigla exata do partido"),
+    partido: list[str] | None = Query(default=None, description="siglas exatas dos partidos"),
     reeleicao: bool | None = Query(
         default=None,
         description=(
@@ -40,7 +40,7 @@ def list_candidates(
         q=q,
         uf=uf,
         cargo=cargo,
-        partido=partido,
+        partido=partido or (),
         reeleicao=reeleicao,
         year=get_settings().election_year if year is None else year,
         limit=limit,

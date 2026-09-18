@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -91,7 +91,7 @@ def index(
     request: Request,
     q: str | None = None,
     cargo: str | None = None,
-    partido: str | None = None,
+    partido: list[str] | None = Query(default=None),
     reeleicao: str | None = None,
     session: Session = Depends(get_session),
 ):
@@ -101,7 +101,7 @@ def index(
             session,
             q=q,
             cargo=cargo,
-            partido=partido,
+            partido=partido or (),
             reeleicao=_reeleicao_filter(reeleicao),
             # Pinned to the configured year: the same database also holds the
             # historical validation set (2022), and an unscoped search lists those
@@ -121,7 +121,7 @@ def index(
             "results": results,
             "q": q or "",
             "cargo": cargo or "",
-            "partido": partido or "",
+            "partido": partido or [],
             "reeleicao": reeleicao or "",
             "cargo_options": [(c["nome"], c["nome"].title()) for c in scope_info["cargos"]],
             "partido_options": queries.partidos_in_scope(
@@ -153,7 +153,7 @@ def candidate_page(
     sq_candidato: str,
     q: str | None = None,
     cargo: str | None = None,
-    partido: str | None = None,
+    partido: list[str] | None = Query(default=None),
     reeleicao: str | None = None,
     session: Session = Depends(get_session),
 ):
@@ -162,15 +162,15 @@ def candidate_page(
         return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
     # Build the back URL, restoring any active filters so the user lands on the
     # filtered list rather than the empty default state.
-    back_params = {}
+    back_params = []
     if q:
-        back_params["q"] = q
+        back_params.append(("q", q))
     if cargo:
-        back_params["cargo"] = cargo
+        back_params.append(("cargo", cargo))
     if partido:
-        back_params["partido"] = partido
+        back_params.extend(("partido", sigla) for sigla in partido)
     if reeleicao:
-        back_params["reeleicao"] = reeleicao
+        back_params.append(("reeleicao", reeleicao))
     settings = get_settings()
     base = settings.site_base_url
     if back_params:

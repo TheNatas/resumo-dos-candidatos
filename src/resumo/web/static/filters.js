@@ -20,10 +20,16 @@
   var controles = Array.prototype.slice.call(
     dialogo.querySelectorAll("select, input"));
 
+  function selectHasValue(select) {
+    return Array.prototype.some.call(select.selectedOptions, function (option) {
+      return !!option.value;
+    });
+  }
+
   // Quantos filtros estreitam a busca: um <select> escolhido, um interruptor ligado.
   function ativos() {
     return controles.filter(function (el) {
-      return el.tagName === "SELECT" ? !!el.value : el.checked;
+      return el.tagName === "SELECT" ? selectHasValue(el) : el.checked;
     }).length;
   }
 
@@ -48,8 +54,10 @@
         if (!el.checked) return;
         el.checked = false;
       } else if (el.tagName === "SELECT") {
-        if (!el.value) return;
-        el.value = "";
+        if (!selectHasValue(el)) return;
+        Array.prototype.forEach.call(el.options, function (option) {
+          option.selected = false;
+        });
       } else {
         return;
       }

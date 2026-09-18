@@ -100,3 +100,18 @@ def test_filters_and_back_navigation_preserve_state(static_site):
             assert "ANA" in page.locator("#results").inner_text()
         finally:
             browser.close()
+
+
+def test_multiple_party_filter(static_site):
+    with playwright.sync_playwright() as browser_api:
+        browser = browser_api.chromium.launch()
+        page = browser.new_page()
+        try:
+            page.goto(f"{static_site}/", wait_until="networkidle")
+            page.locator("[data-filtros-abrir]").click()
+            page.locator("#partido").select_option(["PT", "PSDB"])
+
+            assert page.locator("#results .card:not([hidden])").count() == 2
+            assert "partido=PT" in page.url and "partido=PSDB" in page.url
+        finally:
+            browser.close()

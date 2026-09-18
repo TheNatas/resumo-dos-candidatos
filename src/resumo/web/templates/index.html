@@ -44,12 +44,12 @@
     </label>
     <label class="campo">
       <span class="campo-rotulo">Partido</span>
-      <select name="partido"
+      <select name="partido" multiple size="4"
               hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
               hx-include="{{ incluir|safe }}">
         <option value="">Todos os partidos</option>
         {% for sigla in partido_options %}
-          <option value="{{ sigla }}" {% if partido == sigla %}selected{% endif %}>{{ sigla }}</option>
+          <option value="{{ sigla }}" {% if sigla in partido %}selected{% endif %}>{{ sigla }}</option>
         {% endfor %}
       </select>
     </label>

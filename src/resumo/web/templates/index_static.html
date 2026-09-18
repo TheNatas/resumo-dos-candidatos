@@ -37,7 +37,7 @@
     </label>
     <label class="campo">
       <span class="campo-rotulo">Partido</span>
-      <select id="partido" name="partido">
+      <select id="partido" name="partido" multiple size="4">
         <option value="">Todos os partidos</option>
         {% for sigla in partido_options %}
           <option value="{{ sigla }}">{{ sigla }}</option>
@@ -87,11 +87,17 @@
   var count = document.getElementById("count");
   var cards = Array.prototype.slice.call(document.querySelectorAll("#results .card"));
 
+  function partidoValues() {
+    return Array.prototype.slice.call(partido.selectedOptions).map(function (option) {
+      return option.value;
+    }).filter(function (value) { return !!value; });
+  }
+
   function syncNavigation() {
     var params = new URLSearchParams();
     if (q.value) params.set("q", q.value);
     if (cargo.value) params.set("cargo", cargo.value);
-    if (partido.value) params.set("partido", partido.value);
+    partidoValues().forEach(function (value) { params.append("partido", value); });
     if (reeleicao.checked) params.set("reeleicao", reeleicao.value);
     var search = params.toString();
     window.history.replaceState(null, "", search ? "?" + search : window.location.pathname);
@@ -106,7 +112,7 @@
   function apply() {
     var nq = norm(q.value);
     var nc = cargo.value;
-    var np = partido.value;
+    var np = partidoValues();
     // Só o lado positivo filtra, como em _reeleicao_filter: desligado, o
     // interruptor não restringe nada.
     var nr = reeleicao.checked ? reeleicao.value : "";
@@ -115,7 +121,7 @@
       var card = cards[i];
       var ok = (!nq || card.dataset.norm.indexOf(nq) !== -1)
             && (!nc || card.dataset.cargo.indexOf(nc) !== -1)
-            && (!np || card.dataset.partido === np)
+            && (!np.length || np.indexOf(card.dataset.partido) !== -1)
             && (!nr || card.dataset.reeleicao === nr);
       card.hidden = !ok;
       if (ok) shown++;
@@ -133,7 +139,10 @@
   var params = new URLSearchParams(window.location.search);
   q.value = params.get("q") || "";
   cargo.value = params.get("cargo") || "";
-  partido.value = params.get("partido") || "";
+  var partidos = params.getAll("partido");
+  Array.prototype.slice.call(partido.options).forEach(function (option) {
+    option.selected = partidos.indexOf(option.value) !== -1;
+  });
   reeleicao.checked = params.get("reeleicao") === "sim";
   apply();
 })();
