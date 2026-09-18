@@ -138,9 +138,9 @@ def test_page_filters_by_partido(session):
     session.commit()
 
     page = client.get("/").text
-    assert '<option value="PT"' in page
-    assert '<option value="PSDB"' in page
-    assert '<option value="PSOL"' not in page
+    assert 'name="partido" value="PT"' in page
+    assert 'name="partido" value="PSDB"' in page
+    assert 'name="partido" value="PSOL"' not in page
 
     filtered = client.get("/", params={"partido": "PT"}).text
     assert "JOSE" in filtered

@@ -81,10 +81,10 @@ def test_partido_options_come_from_the_rendered_rows(session, tmp_path, _storage
     render_site(session, out=out, base_url="", site_url=None)
 
     page = (out / "index.html").read_text(encoding="utf-8")
-    assert '<option value="PT">' in page
+    assert 'name="partido" value="PT"' in page
     # A party that only exists outside the published scope would filter to nothing.
-    assert 'value="PL"' not in page
-    assert 'value="PSOL"' not in page
+    assert 'name="partido" value="PL"' not in page
+    assert 'name="partido" value="PSOL"' not in page
 
 
 def test_static_filters_ship_with_the_page(session, tmp_path, _storage):

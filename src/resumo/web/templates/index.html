@@ -42,17 +42,24 @@
         {% endfor %}
       </select>
     </label>
-    <label class="campo">
+    <div class="campo partido-picker" data-partido-picker>
       <span class="campo-rotulo">Partido</span>
-      <select name="partido" multiple size="4"
-              hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
-              hx-include="{{ incluir|safe }}">
-        <option value="">Todos os partidos</option>
+      <button type="button" class="partido-toggle" data-partido-toggle
+              aria-expanded="false" aria-controls="partido-opcoes">
+        <span data-partido-resumo>Todos os partidos</span><span aria-hidden="true">⌄</span>
+      </button>
+      <div id="partido-opcoes" class="partido-opcoes" data-partido-opcoes hidden>
         {% for sigla in partido_options %}
-          <option value="{{ sigla }}" {% if sigla in partido %}selected{% endif %}>{{ sigla }}</option>
+          <label class="partido-opcao">
+            <input type="checkbox" name="partido" value="{{ sigla }}"
+                   {% if sigla in partido %}checked{% endif %}
+                   hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
+                   hx-include="{{ incluir|safe }}">
+            <span>{{ sigla }}</span>
+          </label>
         {% endfor %}
-      </select>
-    </label>
+      </div>
+    </div>
     <fieldset class="campo grupo">
       <legend class="campo-rotulo">Status de reeleição</legend>
       <label class="switch">

@@ -79,7 +79,8 @@ def test_filters_and_back_navigation_preserve_state(static_site):
             page.locator("[data-filtros-abrir]").click()
             assert page.locator("#filtros").is_visible()
 
-            page.locator("#partido").select_option("PT")
+            page.locator("[data-partido-toggle]").click()
+            page.locator("[name='partido'][value='PT']").check()
             assert page.locator("#count").inner_text() == "1 candidatura"
             page.locator("[data-filtros-fechar]").last.click()
             assert not page.locator("#filtros").is_visible()
@@ -95,7 +96,7 @@ def test_filters_and_back_navigation_preserve_state(static_site):
             page.wait_for_load_state("networkidle")
 
             assert page.url.endswith("/?partido=PT")
-            assert page.locator("#partido").input_value() == "PT"
+            assert page.locator("[name='partido'][value='PT']").is_checked()
             assert page.locator("#results .card:not([hidden])").count() == 1
             assert "ANA" in page.locator("#results").inner_text()
         finally:
@@ -109,9 +110,12 @@ def test_multiple_party_filter(static_site):
         try:
             page.goto(f"{static_site}/", wait_until="networkidle")
             page.locator("[data-filtros-abrir]").click()
-            page.locator("#partido").select_option(["PT", "PSDB"])
+            page.locator("[data-partido-toggle]").click()
+            page.locator("[name='partido'][value='PT']").check()
+            page.locator("[name='partido'][value='PSDB']").check()
 
             assert page.locator("#results .card:not([hidden])").count() == 2
+            assert page.locator("[data-partido-resumo]").inner_text() == "2 partidos selecionados"
             assert "partido=PT" in page.url and "partido=PSDB" in page.url
         finally:
             browser.close()

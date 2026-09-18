@@ -17,19 +17,21 @@
 
   var abrir = document.querySelector("[data-filtros-abrir]");
   var contagem = document.querySelector("[data-filtros-contagem]");
+  var partidoToggle = document.querySelector("[data-partido-toggle]");
+  var partidoOpcoes = document.querySelector("[data-partido-opcoes]");
+  var partidoInputs = Array.prototype.slice.call(
+    dialogo.querySelectorAll("[name='partido']"));
   var controles = Array.prototype.slice.call(
-    dialogo.querySelectorAll("select, input"));
+    dialogo.querySelectorAll("select, input[type='checkbox']"));
 
-  function selectHasValue(select) {
-    return Array.prototype.some.call(select.selectedOptions, function (option) {
-      return !!option.value;
-    });
+  function partidosSelecionados() {
+    return partidoInputs.filter(function (input) { return input.checked; });
   }
 
   // Quantos filtros estreitam a busca: um <select> escolhido, um interruptor ligado.
   function ativos() {
     return controles.filter(function (el) {
-      return el.tagName === "SELECT" ? selectHasValue(el) : el.checked;
+      return el.tagName === "SELECT" ? !!el.value : el.checked;
     }).length;
   }
 
@@ -41,6 +43,13 @@
     if (abrir) {
       abrir.setAttribute(
         "aria-label", n === 0 ? "Filtros" : "Filtros (" + n + " ativos)");
+    }
+    var selecionados = partidosSelecionados();
+    if (partidoToggle) {
+      partidoToggle.querySelector("[data-partido-resumo]").textContent =
+        selecionados.length === 0 ? "Todos os partidos" :
+        selecionados.length === 1 ? selecionados[0].value :
+        selecionados.length + " partidos selecionados";
     }
   }
 
@@ -54,7 +63,7 @@
         if (!el.checked) return;
         el.checked = false;
       } else if (el.tagName === "SELECT") {
-        if (!selectHasValue(el)) return;
+        if (!el.value) return;
         Array.prototype.forEach.call(el.options, function (option) {
           option.selected = false;
         });
@@ -70,6 +79,13 @@
   if (abrir) {
     abrir.hidden = false;
     abrir.addEventListener("click", function () { dialogo.showModal(); });
+  }
+  if (partidoToggle && partidoOpcoes) {
+    partidoToggle.addEventListener("click", function () {
+      var aberto = !partidoOpcoes.hidden;
+      partidoOpcoes.hidden = aberto;
+      partidoToggle.setAttribute("aria-expanded", String(!aberto));
+    });
   }
   Array.prototype.slice.call(dialogo.querySelectorAll("[data-filtros-fechar]"))
     .forEach(function (botao) {

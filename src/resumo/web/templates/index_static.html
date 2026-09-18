@@ -35,15 +35,21 @@
         {% endfor %}
       </select>
     </label>
-    <label class="campo">
+    <div class="campo partido-picker" data-partido-picker>
       <span class="campo-rotulo">Partido</span>
-      <select id="partido" name="partido" multiple size="4">
-        <option value="">Todos os partidos</option>
+      <button type="button" class="partido-toggle" data-partido-toggle
+              aria-expanded="false" aria-controls="partido-opcoes">
+        <span data-partido-resumo>Todos os partidos</span><span aria-hidden="true">⌄</span>
+      </button>
+      <div id="partido-opcoes" class="partido-opcoes" data-partido-opcoes hidden>
         {% for sigla in partido_options %}
-          <option value="{{ sigla }}">{{ sigla }}</option>
+          <label class="partido-opcao">
+            <input type="checkbox" name="partido" value="{{ sigla }}">
+            <span>{{ sigla }}</span>
+          </label>
         {% endfor %}
-      </select>
-    </label>
+      </div>
+    </div>
     <fieldset class="campo grupo">
       <legend class="campo-rotulo">Status de reeleição</legend>
       <label class="switch">
@@ -81,16 +87,16 @@
   };
   var q = document.getElementById("q");
   var cargo = document.getElementById("cargo");
-  var partido = document.getElementById("partido");
+  var partido = Array.prototype.slice.call(
+    document.querySelectorAll("[name='partido']"));
   var reeleicao = document.querySelector("[name='reeleicao']");
   var empty = document.getElementById("empty");
   var count = document.getElementById("count");
   var cards = Array.prototype.slice.call(document.querySelectorAll("#results .card"));
 
   function partidoValues() {
-    return Array.prototype.slice.call(partido.selectedOptions).map(function (option) {
-      return option.value;
-    }).filter(function (value) { return !!value; });
+    return partido.filter(function (input) { return input.checked; })
+      .map(function (input) { return input.value; });
   }
 
   function syncNavigation() {
@@ -132,7 +138,7 @@
   }
 
   q.addEventListener("input", apply);
-  [cargo, partido, reeleicao].forEach(function (el) {
+  [cargo, reeleicao].concat(partido).forEach(function (el) {
     el.addEventListener("change", apply);
   });
 
@@ -140,8 +146,8 @@
   q.value = params.get("q") || "";
   cargo.value = params.get("cargo") || "";
   var partidos = params.getAll("partido");
-  Array.prototype.slice.call(partido.options).forEach(function (option) {
-    option.selected = partidos.indexOf(option.value) !== -1;
+  partido.forEach(function (input) {
+    input.checked = partidos.indexOf(input.value) !== -1;
   });
   reeleicao.checked = params.get("reeleicao") === "sim";
   apply();
