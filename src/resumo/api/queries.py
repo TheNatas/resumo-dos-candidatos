@@ -102,6 +102,7 @@ def search_candidacies(
     uf: str | None = None,
     cargo: str | None = None,
     partido: Sequence[str] = (),
+    mulher: bool | None = None,
     reeleicao: bool | None = None,
     year: int | None = None,
     limit: int = 50,
@@ -124,6 +125,8 @@ def search_candidacies(
         # Exact sigla, not a substring: "PP" inside "PPS"/"PSDB" would silently widen
         # a filter the reader chose precisely.
         stmt = stmt.where(Candidacy.sg_partido.in_(partidos))
+    if mulher:
+        stmt = stmt.where(Candidacy.genero == "FEMININO")
     if reeleicao is not None:
         stmt = stmt.where(_CONFIRMED_REELECTION if reeleicao else ~_CONFIRMED_REELECTION)
     if year:
@@ -1001,6 +1004,7 @@ def _candidacy_summary(
         "cargo": c.ds_cargo,
         "uf": c.sg_uf,
         "partido": c.sg_partido,
+        "genero": c.genero,
         "situacao": c.ds_situacao_candidatura,
         # Gated exactly like the ficha's track record: never a guessed link.
         "incumbent_confirmed": bool(incumbent_confirmed),

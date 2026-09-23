@@ -47,6 +47,7 @@ def _candidacy_row(r: dict[str, str]) -> dict | None:
         "nome_urna": clean(r.get("NM_URNA_CANDIDATO")),
         "nome_normalizado": normalize_name(r.get("NM_CANDIDATO")),
         "data_nascimento": parse_date(r.get("DT_NASCIMENTO")),
+        "genero": clean(r.get("DS_GENERO")),
         "cd_cargo": cd_cargo,
         "ds_cargo": clean(r.get("DS_CARGO")),
         "sg_uf": clean(r.get("SG_UF")),

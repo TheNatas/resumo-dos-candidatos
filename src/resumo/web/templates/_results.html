@@ -3,11 +3,13 @@
   {% for c in results %}
   <li class="card" data-norm="{{ c.nome_normalizado or '' }}{{ ' ' }}{{ (c.nome_urna or '')|upper }}"
       data-cargo="{{ c.cargo or '' }}" data-partido="{{ c.partido or '' }}"
+      data-genero="{{ c.genero or '' }}"
       data-reeleicao="{{ 'sim' if c.incumbent_confirmed else 'nao' }}">
     {%- set back_params = [] -%}
     {%- if q %}{% set _ = back_params.append('q=' ~ q | urlencode) %}{% endif -%}
     {%- if cargo %}{% set _ = back_params.append('cargo=' ~ cargo | urlencode) %}{% endif -%}
     {%- for sigla in partido %}{% set _ = back_params.append('partido=' ~ sigla | urlencode) %}{% endfor -%}
+    {%- if mulher %}{% set _ = back_params.append('mulher=' ~ mulher | urlencode) %}{% endif -%}
     {%- if reeleicao %}{% set _ = back_params.append('reeleicao=' ~ reeleicao | urlencode) %}{% endif -%}
     {%- set back_qs = ('?' ~ back_params | join('&')) if back_params else '' -%}
     <a href="{{ base_url }}/candidato/{{ c.sq_candidato }}{{ back_qs }}">

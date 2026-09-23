@@ -92,6 +92,7 @@ def index(
     q: str | None = None,
     cargo: str | None = None,
     partido: list[str] | None = Query(default=None),
+    mulher: str | None = None,
     reeleicao: str | None = None,
     session: Session = Depends(get_session),
 ):
@@ -102,6 +103,7 @@ def index(
             q=q,
             cargo=cargo,
             partido=partido or (),
+            mulher=(mulher or "").lower() == "sim",
             reeleicao=_reeleicao_filter(reeleicao),
             # Pinned to the configured year: the same database also holds the
             # historical validation set (2022), and an unscoped search lists those
@@ -109,7 +111,7 @@ def index(
             year=scope_info["election_year"],
             limit=50,
         )
-        if (q or cargo or partido or reeleicao)
+        if (q or cargo or partido or mulher or reeleicao)
         else []
     )
     scope_label = _scope_label(scope_info)
@@ -122,6 +124,7 @@ def index(
             "q": q or "",
             "cargo": cargo or "",
             "partido": partido or [],
+            "mulher": mulher or "",
             "reeleicao": reeleicao or "",
             "cargo_options": [(c["nome"], c["nome"].title()) for c in scope_info["cargos"]],
             "partido_options": queries.partidos_in_scope(
@@ -154,6 +157,7 @@ def candidate_page(
     q: str | None = None,
     cargo: str | None = None,
     partido: list[str] | None = Query(default=None),
+    mulher: str | None = None,
     reeleicao: str | None = None,
     session: Session = Depends(get_session),
 ):
@@ -169,6 +173,8 @@ def candidate_page(
         back_params.append(("cargo", cargo))
     if partido:
         back_params.extend(("partido", sigla) for sigla in partido)
+    if mulher:
+        back_params.append(("mulher", mulher))
     if reeleicao:
         back_params.append(("reeleicao", reeleicao))
     settings = get_settings()

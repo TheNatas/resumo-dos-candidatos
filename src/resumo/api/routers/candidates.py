@@ -19,6 +19,9 @@ def list_candidates(
     uf: str | None = None,
     cargo: str | None = None,
     partido: list[str] | None = Query(default=None, description="siglas exatas dos partidos"),
+    mulher: bool | None = Query(
+        default=None, description="true = candidaturas declaradas pelo TSE como FEMININO"
+    ),
     reeleicao: bool | None = Query(
         default=None,
         description=(
@@ -41,6 +44,7 @@ def list_candidates(
         uf=uf,
         cargo=cargo,
         partido=partido or (),
+        mulher=mulher,
         reeleicao=reeleicao,
         year=get_settings().election_year if year is None else year,
         limit=limit,

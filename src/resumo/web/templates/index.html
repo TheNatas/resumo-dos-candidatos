@@ -3,7 +3,7 @@
 {# `hx-include` pega o estado inteiro do painel a cada requisição — os interruptores
    de reeleição entram só quando marcados (htmx ignora checkbox desmarcado), que é
    exatamente a semântica do filtro: nenhum ou os dois marcados não restringem nada. #}
-{% set incluir = "[name='q'],[name='cargo'],[name='partido'],[name='reeleicao']" %}
+{% set incluir = "[name='q'],[name='cargo'],[name='partido'],[name='mulher'],[name='reeleicao']" %}
 <section class="search">
   <h1>Busque um candidato</h1>
   <p class="scope">{{ scope_label }}</p>
@@ -60,6 +60,17 @@
         {% endfor %}
       </div>
     </div>
+    <fieldset class="campo grupo">
+      <legend class="campo-rotulo">Gênero declarado</legend>
+      <label class="switch">
+        <input type="checkbox" role="switch" name="mulher" value="sim"
+               {% if mulher == 'sim' %}checked{% endif %}
+               hx-get="{{ base_url }}/" hx-target="#results" hx-trigger="change"
+               hx-include="{{ incluir|safe }}">
+        <span>Mulheres</span>
+      </label>
+      <p class="hint">Conforme o gênero declarado no cadastro oficial do TSE.</p>
+    </fieldset>
     <fieldset class="campo grupo">
       <legend class="campo-rotulo">Status de reeleição</legend>
       <label class="switch">

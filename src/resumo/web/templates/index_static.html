@@ -51,6 +51,14 @@
       </div>
     </div>
     <fieldset class="campo grupo">
+      <legend class="campo-rotulo">Gênero declarado</legend>
+      <label class="switch">
+        <input type="checkbox" role="switch" name="mulher" value="sim">
+        <span>Mulheres</span>
+      </label>
+      <p class="hint">Conforme o gênero declarado no cadastro oficial do TSE.</p>
+    </fieldset>
+    <fieldset class="campo grupo">
       <legend class="campo-rotulo">Status de reeleição</legend>
       <label class="switch">
         <input type="checkbox" role="switch" name="reeleicao" value="sim">
@@ -90,6 +98,7 @@
   var partido = Array.prototype.slice.call(
     document.querySelectorAll("[name='partido']"));
   var reeleicao = document.querySelector("[name='reeleicao']");
+  var mulher = document.querySelector("[name='mulher']");
   var empty = document.getElementById("empty");
   var count = document.getElementById("count");
   var cards = Array.prototype.slice.call(document.querySelectorAll("#results .card"));
@@ -105,6 +114,7 @@
     if (cargo.value) params.set("cargo", cargo.value);
     partidoValues().forEach(function (value) { params.append("partido", value); });
     if (reeleicao.checked) params.set("reeleicao", reeleicao.value);
+    if (mulher.checked) params.set("mulher", mulher.value);
     var search = params.toString();
     window.history.replaceState(null, "", search ? "?" + search : window.location.pathname);
     Array.prototype.slice.call(document.querySelectorAll("#results a[href*='/candidato/']"))
@@ -128,6 +138,7 @@
       var ok = (!nq || card.dataset.norm.indexOf(nq) !== -1)
             && (!nc || card.dataset.cargo.indexOf(nc) !== -1)
             && (!np.length || np.indexOf(card.dataset.partido) !== -1)
+            && (!mulher.checked || card.dataset.genero === "FEMININO")
             && (!nr || card.dataset.reeleicao === nr);
       card.hidden = !ok;
       if (ok) shown++;
@@ -138,7 +149,7 @@
   }
 
   q.addEventListener("input", apply);
-  [cargo, reeleicao].concat(partido).forEach(function (el) {
+  [cargo, reeleicao, mulher].concat(partido).forEach(function (el) {
     el.addEventListener("change", apply);
   });
 
@@ -146,6 +157,7 @@
   q.value = params.get("q") || "";
   cargo.value = params.get("cargo") || "";
   var partidos = params.getAll("partido");
+  mulher.checked = params.get("mulher") === "sim";
   partido.forEach(function (input) {
     input.checked = partidos.indexOf(input.value) !== -1;
   });

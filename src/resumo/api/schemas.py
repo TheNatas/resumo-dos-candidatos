@@ -22,6 +22,7 @@ class CandidateSummary(BaseModel):
     cargo: str | None
     uf: str | None
     partido: str | None
+    genero: str | None
     situacao: str | None
     incumbent_confirmed: bool
     incumbent_house: str | None

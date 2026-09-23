@@ -78,6 +78,17 @@ def test_search_finds_candidate(session):
     assert any(c["sq_candidato"] == "C1" for c in resp.json())
 
 
+def test_women_filter_uses_official_gender(session):
+    _seed_incumbent(session)
+    session.query(Candidacy).filter_by(sq_candidato="C2").update({"genero": "FEMININO"})
+    session.commit()
+
+    filtered = client.get("/api/candidates", params={"mulher": "true"})
+
+    assert filtered.status_code == 200
+    assert [candidate["sq_candidato"] for candidate in filtered.json()] == ["C2"]
+
+
 def test_ficha_shows_track_record_only_for_confirmed_incumbent(session):
     _seed_incumbent(session)
 

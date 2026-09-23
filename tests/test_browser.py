@@ -26,6 +26,7 @@ def _seed(session):
                 nome_candidato="ANA BROWSER",
                 nome_urna="ANA",
                 nome_normalizado="ANA BROWSER",
+                genero="FEMININO",
                 sg_partido="PT",
                 is_majoritario=True,
             ),
@@ -38,6 +39,7 @@ def _seed(session):
                 nome_candidato="BRUNO BROWSER",
                 nome_urna="BRUNO",
                 nome_normalizado="BRUNO BROWSER",
+                genero="MASCULINO",
                 sg_partido="PSDB",
                 is_majoritario=True,
             ),
@@ -117,5 +119,22 @@ def test_multiple_party_filter(static_site):
             assert page.locator("#results .card:not([hidden])").count() == 2
             assert page.locator("[data-partido-resumo]").inner_text() == "2 partidos selecionados"
             assert "partido=PT" in page.url and "partido=PSDB" in page.url
+        finally:
+            browser.close()
+
+
+def test_women_filter_shows_only_tse_declared_feminino(static_site):
+    with playwright.sync_playwright() as browser_api:
+        browser = browser_api.chromium.launch()
+        page = browser.new_page()
+        try:
+            page.goto(f"{static_site}/", wait_until="networkidle")
+            page.locator("[data-filtros-abrir]").click()
+            page.locator("[name='mulher']").check()
+
+            assert page.locator("#results .card:not([hidden])").count() == 1
+            assert "mulher=sim" in page.url
+            assert "ANA" in page.locator("#results").inner_text()
+            assert "BRUNO" not in page.locator("#results").inner_text()
         finally:
             browser.close()

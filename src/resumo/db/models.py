@@ -216,6 +216,7 @@ class Candidacy(Base):
     nome_urna: Mapped[str | None] = mapped_column(String(255))
     nome_normalizado: Mapped[str | None] = mapped_column(String(255), index=True)
     data_nascimento: Mapped[dt.date | None] = mapped_column(Date)
+    genero: Mapped[str | None] = mapped_column(String(32), index=True)
 
     cd_cargo: Mapped[int | None] = mapped_column(Integer)
     ds_cargo: Mapped[str | None] = mapped_column(String(64), index=True)

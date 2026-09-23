@@ -39,8 +39,8 @@ def _storage(tmp_path, monkeypatch):
 def test_consulta_cand_ingests_and_derives_coalition(tmp_path, session):
     rows = [
         tse_row(SQ_CANDIDATO="250000111", NM_CANDIDATO="JOSÉ DA SILVA", NR_CPF_CANDIDATO="123.456.789-09",
-                SQ_COLIGACAO="COL1", NM_COLIGACAO="COLIGACAO A", DS_COMPOSICAO_COLIGACAO="PT / PSB"),
-        tse_row(SQ_CANDIDATO="250000222", NM_CANDIDATO="MARIA SOUZA", CD_CARGO="3", DS_CARGO="GOVERNADOR"),
+            DS_GENERO="MASCULINO", SQ_COLIGACAO="COL1", NM_COLIGACAO="COLIGACAO A", DS_COMPOSICAO_COLIGACAO="PT / PSB"),
+        tse_row(SQ_CANDIDATO="250000222", NM_CANDIDATO="MARIA SOUZA", DS_GENERO="FEMININO", CD_CARGO="3", DS_CARGO="GOVERNADOR"),
     ]
     src = _write(tmp_path, "consulta_cand_2022.zip", make_tse_zip(rows))
 
@@ -53,7 +53,9 @@ def test_consulta_cand_ingests_and_derives_coalition(tmp_path, session):
     jose = session.get(Candidacy, "250000111")
     assert jose.nome_normalizado == "JOSE DA SILVA"  # latin-1 decoded + normalized
     assert jose.cpf_raw == "123.456.789-09"
+    assert jose.genero == "MASCULINO"
     gov = session.get(Candidacy, "250000222")
+    assert gov.genero == "FEMININO"
     assert gov.is_majoritario is True  # GOVERNADOR -> majoritário
 
 

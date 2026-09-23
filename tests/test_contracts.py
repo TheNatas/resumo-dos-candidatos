@@ -50,6 +50,7 @@ def test_api_exposes_stable_summary_and_detail_contract(session):
         "cargo",
         "uf",
         "partido",
+        "genero",
         "situacao",
         "incumbent_confirmed",
         "incumbent_house",
