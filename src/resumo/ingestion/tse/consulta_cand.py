@@ -119,6 +119,7 @@ class ConsultaCandCollector(Collector):
             source_url,
             uf=",".join(uf_scope),
             cargo=",".join(map(str, sorted(cargo_scope))),
+            normalization="gender-v1",
         )
 
         try:

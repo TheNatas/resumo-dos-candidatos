@@ -14,6 +14,7 @@ from resumo.db.models import (
     GovernmentProposal,
     RawIngestion,
 )
+from resumo.ingestion.ledger import content_hash, scoped_key
 from resumo.ingestion.tse.consulta_cand import ConsultaCandCollector
 from resumo.ingestion.tse.foto_candidato import FotoCandidatoCollector
 from resumo.ingestion.tse.proposta_governo import PropostaGovernoCollector
@@ -74,6 +75,30 @@ def test_consulta_cand_is_idempotent(tmp_path, session):
     assert session.scalar(
         select(func.count()).select_from(RawIngestion).where(RawIngestion.status == "success")
     ) == 1
+
+
+def test_consulta_cand_reprocesses_legacy_ledger_after_gender_field_added(tmp_path, session):
+    src = _write(
+        tmp_path,
+        "consulta_cand_2022.zip",
+        make_tse_zip([tse_row(SQ_CANDIDATO="LEGACY1", DS_GENERO="FEMININO")]),
+    )
+    digest = content_hash(src.read_bytes())
+    session.add(
+        RawIngestion(
+            collector_name="tse_consulta_cand",
+            source_url=scoped_key(str(src), uf="SC", cargo="3,5,6,7"),
+            content_hash=digest,
+            row_count=1,
+            status="success",
+        )
+    )
+    session.commit()
+
+    result = ConsultaCandCollector().run(session, source=src, year=2022)
+
+    assert result.status == "ingested"
+    assert session.get(Candidacy, "LEGACY1").genero == "FEMININO"
 
 
 def test_proposta_maps_pdf_to_candidate(tmp_path, session):
